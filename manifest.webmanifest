@@ -1,5 +1,6 @@
 {
   "name": "PET/PSR Navlog",
+  "version": "1.1",
   "short_name": "PET/PSR",
   "description": "Point of Equal Time i Point of Safe Return z planów SkyDemon — działa offline. Autor: Hubert Pofelski.",
   "lang": "pl",

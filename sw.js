@@ -1,5 +1,5 @@
 /* PET/PSR Navlog — service worker (offline) */
-const CACHE = 'petpsr-4d50862986';
+const CACHE = 'petpsr-cf6ce4cfb0';
 const FILES = ["./", "./index.html", "./manifest.webmanifest", "./icons/apple-touch-icon.png", "./icons/icon-192.png", "./icons/icon-512.png", "./icons/icon-maskable-512.png"];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

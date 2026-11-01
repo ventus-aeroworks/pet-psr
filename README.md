@@ -1,6 +1,6 @@
 # PET/PSR Navlog
 
-by Hubert Pofelski
+by Hubert Pofelski · wersja 1.1
 
 Kalkulator Point of Equal Time i Point of Safe Return dla statków powietrznych
 wielosilnikowych (AEO / OEI), z importem tras z SkyDemon (`.flightplan`) i
@@ -18,6 +18,12 @@ variation from WMM2025. Installable PWA that works offline.
 
 Otwórz aplikację raz z internetem. Gdy pojawi się „Gotowe offline”, działa bez sieci.
 Plany lotów i ustawienia są przechowywane wyłącznie na urządzeniu.
+
+## Baza lotnisk / Airport data
+
+Ok. 11 800 lotnisk, lądowisk i heliportów Europy, basenu Morza Śródziemnego i Bliskiego
+Wschodu z OurAirports (domena publiczna, stan na 2026-11-01).
+Służy wyłącznie do podpisywania punktów planu — obliczenia opierają się na współrzędnych.
 
 ## Model magnetyczny / Magnetic model
 
