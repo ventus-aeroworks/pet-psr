@@ -1,0 +1,1659 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#EEF1EC">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="PET/PSR">
+<meta name="author" content="Hubert Pofelski">
+<meta name="description" content="PET i PSR dla statków powietrznych wielosilnikowych, z importem planów SkyDemon. Działa offline.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}img{max-width:100%}</style>
+<title>PET/PSR Navlog</title>
+
+<style>
+/* Layout: arkusz navlogu — kolumna danych po lewej, po prawej karty PET/PSR, mapa trasy, pasek odległości i tabela odcinków */
+:root {
+  --paper: #EEF1EC;   /* papier mapy */
+  --sheet: #FAFBF8;   /* arkusz */
+  --ink: #142036;     /* atrament nawigacyjny */
+  --ink-2: #566175;
+  --rule: #D3D9D1;
+  --sea: #DFEAEE;     /* morze na mapie ICAO */
+  --land: #ECE6D6;
+  --magenta: #A01A78; /* magenta mapy lotniczej — PET */
+  --blue: #1D5EA8;    /* PSR */
+  --warn: #A86500;
+  --bad: #B3261E;
+  --ok: #2B7A4B;
+  --focus: #1D5EA8;
+  --f-display: "Avenir Next Condensed", "Barlow Semi Condensed", "Arial Narrow", sans-serif;
+  --f-body: -apple-system, BlinkMacSystemFont, "Barlow", "Segoe UI", Roboto, Helvetica, sans-serif;
+  --f-data: ui-monospace, "SF Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --paper: #0C121D; --sheet: #131B29; --ink: #DCE3EE; --ink-2: #8D99AC; --rule: #263248;
+  --sea: #0F1D2B; --land: #1A2230; --magenta: #E373C6; --blue: #72A9EC; --warn: #E3A245; --bad: #F07D73; --ok: #6CC490; --focus: #72A9EC;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --paper: #0C121D; --sheet: #131B29; --ink: #DCE3EE; --ink-2: #8D99AC; --rule: #263248;
+  --sea: #0F1D2B; --land: #1A2230; --magenta: #E373C6; --blue: #72A9EC; --warn: #E3A245; --bad: #F07D73; --ok: #6CC490; --focus: #72A9EC;
+  color-scheme: dark; }
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--paper); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.45; }
+.app { max-width: 1440px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 28px; display: grid; gap: 16px; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* --- pasek górny --- */
+.bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-block: 4px; border-bottom: 2px solid var(--ink); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 34px; height: 34px; flex: none; }
+.brand .name { font-family: var(--f-display); font-weight: 700; font-size: 26px; letter-spacing: .01em; line-height: 1; }
+.brand .title { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 2px; min-width: 0; }
+.brand .sub { font-family: var(--f-display); font-size: 15px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
+.brand .by { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.btn { appearance: none; border: 1px solid var(--rule); background: var(--sheet); border-radius: 8px; min-height: 40px; padding: 0 14px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; font-size: 14px; white-space: nowrap; }
+.btn:hover { border-color: var(--ink-2); }
+.btn.primary { background: var(--ink); color: var(--sheet); border-color: var(--ink); }
+.btn.small { min-height: 32px; padding: 0 10px; font-size: 13px; }
+.btn.quiet { background: transparent; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; border: 1px solid currentColor; }
+.chip.ok { color: var(--ok); }
+.chip.warn { color: var(--warn); }
+
+/* --- układ --- */
+.layout { display: grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r); padding: 14px; display: grid; gap: 18px; }
+@media (min-width: 901px) { .panel { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); max-height: calc(100vh - 24px); overflow-y: auto; } }
+.panel section { display: grid; gap: 10px; }
+.panel h3 { margin: 0; font-family: var(--f-display); font-size: 13px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--rule); padding-bottom: 6px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field > label, .lbl { font-size: 12px; font-weight: 600; color: var(--ink-2); letter-spacing: .02em; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { min-width: 0; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.inp { display: flex; align-items: stretch; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); overflow: hidden; min-height: 44px; }
+.inp:focus-within { border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
+.inp input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 0 10px; font-family: var(--f-data); font-size: 17px; font-variant-numeric: tabular-nums; outline: none; }
+.inp .u { display: flex; align-items: center; padding: 0 10px 0 4px; font-size: 12px; color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+select { width: 100%; min-height: 44px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); padding: 0 10px; font-size: 15px; }
+.hint { margin: 0; font-size: 12px; color: var(--ink-2); }
+.hint.warn { color: var(--warn); }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 1px solid var(--rule); border-radius: 9px; padding: 3px; background: var(--paper); gap: 3px; }
+.seg button { appearance: none; border: 0; background: transparent; min-height: 36px; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--ink-2); cursor: pointer; padding: 0 6px; }
+.seg button[aria-pressed="true"] { background: var(--sheet); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+/* tabela osiągów */
+.perf { display: grid; grid-template-columns: auto 1fr 1fr; gap: 8px 10px; align-items: center; }
+.perf .h { font-size: 12px; font-weight: 700; color: var(--ink-2); letter-spacing: .06em; text-transform: uppercase; }
+.perf .rh { font-size: 13px; font-weight: 600; }
+.perf.example .oei { border-color: var(--warn); border-style: dashed; }
+
+/* lista legów */
+.legs { display: grid; gap: 6px; }
+.leg { appearance: none; text-align: left; border: 1px solid var(--rule); background: var(--paper); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: grid; grid-template-columns: 26px 1fr auto; gap: 2px 8px; align-items: baseline; min-height: 44px; }
+.leg .n { font-family: var(--f-data); font-size: 12px; color: var(--ink-2); }
+.leg .rt { font-family: var(--f-display); font-weight: 600; font-size: 17px; letter-spacing: .01em; min-width: 0; overflow-wrap: anywhere; }
+.leg .d { font-family: var(--f-data); font-size: 13px; font-variant-numeric: tabular-nums; }
+.leg .meta { grid-column: 2 / 4; font-size: 12px; color: var(--ink-2); }
+.leg[aria-pressed="true"] { border-color: var(--ink); background: var(--sheet); box-shadow: inset 3px 0 0 var(--magenta); }
+.namer { display: grid; gap: 6px; padding: 10px; border: 1px dashed var(--rule); border-radius: 8px; }
+.namer .row .inp { flex: 1; }
+
+/* --- wyniki --- */
+.results { display: grid; gap: 16px; min-width: 0; }
+.leghead { display: grid; gap: 6px; }
+.leghead .route { font-family: var(--f-display); font-size: clamp(24px, 3.2vw, 34px); font-weight: 700; line-height: 1.05; letter-spacing: .005em; text-wrap: balance; margin: 0; }
+.leghead .route .nm { font-weight: 500; color: var(--ink-2); font-size: .62em; letter-spacing: .02em; }
+.leghead .route .ar { color: var(--magenta); padding: 0 .2em; }
+.facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 0; }
+.facts div { display: grid; }
+.facts dt { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+.facts dd { margin: 0; font-family: var(--f-data); font-size: 16px; font-variant-numeric: tabular-nums; }
+.alerts { display: grid; gap: 6px; }
+.alert { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; border: 1px solid currentColor; font-size: 14px; }
+.alert.warn { color: var(--warn); }
+.alert.bad { color: var(--bad); }
+.alert span { color: var(--ink); }
+.alert b { flex: none; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; padding-top: 2px; }
+
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r); padding: 14px 16px; display: grid; gap: 10px; align-content: start; position: relative; overflow: hidden; }
+.card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--c); }
+.card.pet { --c: var(--magenta); }
+.card.psr { --c: var(--blue); }
+.card.sec::before { background: repeating-linear-gradient(180deg, var(--c) 0 6px, transparent 6px 10px); }
+.card header { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.card .tag { font-family: var(--f-display); font-weight: 700; font-size: 13px; letter-spacing: .12em; color: var(--c); border: 1.5px solid var(--c); border-radius: 4px; padding: 1px 6px; }
+.card h2 { margin: 0; font-family: var(--f-display); font-size: 20px; font-weight: 600; }
+.card .why { font-size: 12px; color: var(--ink-2); width: 100%; }
+.big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.big .num { font-family: var(--f-display); font-size: 52px; font-weight: 700; line-height: .95; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.big .u { font-size: 14px; color: var(--ink-2); font-weight: 600; }
+.big .num.txt { font-size: 30px; }
+.kv { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px 14px; margin: 0; }
+.kv div { display: grid; min-width: 0; }
+.kv dt { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); }
+.kv dd { margin: 0; font-family: var(--f-data); font-size: 15px; font-variant-numeric: tabular-nums; }
+.kv dd small { color: var(--ink-2); font-size: 12px; }
+.kv dd.bad { color: var(--bad); font-weight: 700; }
+.kv dd.good { color: var(--ok); font-weight: 700; }
+.pos { margin: 0; padding-top: 8px; border-top: 1px dashed var(--rule); display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; font-size: 13px; color: var(--ink-2); }
+.pos .coord { font-family: var(--f-data); font-size: 15px; color: var(--ink); font-weight: 600; letter-spacing: .02em; }
+
+.fig { background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r); padding: 12px; margin: 0; display: grid; gap: 8px; }
+.fig figcaption { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-2); }
+.fig figcaption i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; }
+.fig svg { width: 100%; height: auto; display: block; }
+.figs { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.svg-t { font-family: var(--f-data); font-size: 11px; fill: var(--ink-2); }
+.svg-l { font-family: var(--f-display); font-size: 14px; font-weight: 700; fill: var(--ink); }
+
+.tablewrap { overflow-x: auto; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r); }
+table.navlog { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+.navlog caption { text-align: left; padding: 10px 12px 6px; font-family: var(--f-display); font-weight: 700; font-size: 13px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); }
+.navlog th, .navlog td { padding: 7px 8px; border-top: 1px solid var(--rule); white-space: nowrap; text-align: right; }
+.navlog th { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); background: var(--paper); border-top: 0; }
+.navlog td { font-family: var(--f-data); }
+.navlog td.l, .navlog th.l { text-align: left; }
+.navlog td.wp { font-family: var(--f-body); font-weight: 600; }
+.navlog td.wp small { font-family: var(--f-data); font-weight: 400; color: var(--ink-2); margin-left: 6px; }
+.navlog .mk { display: inline-block; font-family: var(--f-display); font-size: 11px; font-weight: 700; letter-spacing: .06em; padding: 0 5px; border-radius: 3px; margin-left: 4px; color: var(--sheet); }
+.navlog .mk.pet { background: var(--magenta); }
+.navlog .mk.psr { background: var(--blue); }
+.navlog .mk.sec { background: transparent; border: 1px solid currentColor; }
+.navlog .mk.pet.sec { color: var(--magenta); }
+.navlog .mk.psr.sec { color: var(--blue); }
+.navlog tfoot td { font-weight: 700; background: var(--paper); }
+
+.empty { background: var(--sheet); border: 1px dashed var(--rule); border-radius: var(--r); padding: 28px; display: grid; gap: 8px; }
+.empty h2 { margin: 0; font-family: var(--f-display); font-size: 24px; }
+.foot { font-size: 12px; color: var(--ink-2); border-top: 1px solid var(--rule); padding-top: 10px; max-width: 90ch; }
+.drop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: color-mix(in srgb, var(--paper) 85%, transparent); font-family: var(--f-display); font-size: 28px; font-weight: 700; border: 3px dashed var(--magenta); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); background: var(--ink); color: var(--sheet); padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; z-index: 60; max-width: calc(100vw - 32px); }
+@media (prefers-reduced-motion: no-preference) { .card { transition: border-color .2s; } }
+.inp.ro { background: transparent; border-style: dashed; }
+.inp.ro input { color: var(--ink); }
+.seg button:disabled { opacity: .45; cursor: default; }
+.btn.lang { font-family: var(--f-display); letter-spacing: .08em; min-width: 52px; justify-content: center; }
+.varbox { display: grid; gap: 8px; }
+.model-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+</style>
+
+</head>
+<body>
+<script>window.__PWA = true;</script>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <svg viewBox="0 0 34 34" aria-hidden="true"><rect x="0.5" y="0.5" width="33" height="33" rx="7" fill="var(--ink)"/><path d="M6 17H28" stroke="var(--sheet)" stroke-width="2" stroke-linecap="round"/><circle cx="6.5" cy="17" r="2.6" fill="var(--sheet)"/><circle cx="27.5" cy="17" r="2.6" fill="var(--sheet)"/><path d="M19 11.5 24.5 17 19 22.5 13.5 17Z" fill="var(--magenta)"/><path d="M11 10.5V23.5" stroke="var(--blue)" stroke-width="2.4"/></svg>
+      <div class="title"><span class="name">PET/PSR</span><span class="sub">Navlog</span><span class="by">by Hubert Pofelski</span></div>
+    </div>
+    <div class="bar-actions">
+      <span id="offline" class="chip ok" data-i18n="offline" hidden></span>
+      <label class="btn primary" for="file" data-i18n="import"></label>
+      <input id="file" type="file" hidden>
+      <button id="copy" class="btn" type="button" data-i18n="copy"></button>
+      <button id="theme" class="btn quiet" type="button" hidden></button>
+      <button id="lang" class="btn lang" type="button"></button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="panel" id="inputs">
+      <div class="seg" id="mode">
+        <button type="button" data-mode="route" data-i18n="modeRoute"></button>
+        <button type="button" data-mode="manual" data-i18n="modeManual"></button>
+      </div>
+
+      <section id="route-src">
+        <h3 data-i18n="hRoute"></h3>
+        <div class="field">
+          <label for="plan" data-i18n="plan"></label>
+          <div class="row"><select id="plan"></select><button id="delplan" class="btn small quiet" type="button" data-i18n="del"></button></div>
+          <p class="hint" id="plan-meta"></p>
+        </div>
+        <div class="field"><span class="lbl" data-i18n="leg"></span><div id="legs" class="legs"></div></div>
+        <div class="row2">
+          <div class="field"><label for="from" data-i18n="from"></label><select id="from"></select></div>
+          <div class="field"><label for="to" data-i18n="to"></label><select id="to"></select></div>
+        </div>
+        <div id="namer"></div>
+      </section>
+
+      <section id="manual-src" hidden>
+        <h3 data-i18n="hSegment"></h3>
+        <div class="row2">
+          <div class="field"><label for="mc" data-i18n="mc"></label><div class="inp"><input id="mc" data-k="mc" inputmode="decimal" autocomplete="off"><span class="u">°M</span></div></div>
+          <div class="field"><label for="dist" data-i18n="dist"></label><div class="inp"><input id="dist" data-k="dist" inputmode="decimal" autocomplete="off"><span class="u">NM</span></div></div>
+        </div>
+      </section>
+
+      <section>
+        <h3 data-i18n="hWind"></h3>
+        <div class="row2">
+          <div class="field"><label for="wd" data-i18n="wd"></label><div class="inp"><input id="wd" data-k="windDir" inputmode="decimal" autocomplete="off"><span class="u">°</span></div></div>
+          <div class="field"><label for="ws" data-i18n="ws"></label><div class="inp"><input id="ws" data-k="windSpd" inputmode="decimal" autocomplete="off"><span class="u">kt</span></div></div>
+        </div>
+        <div class="seg" id="windref">
+          <button type="button" data-ref="T" data-i18n="refT"></button>
+          <button type="button" data-ref="M" data-i18n="refM"></button>
+        </div>
+        <div class="varbox">
+          <span class="lbl" data-i18n="var"></span>
+          <div class="seg" id="varmode">
+            <button type="button" data-vm="auto" data-i18n="vmAuto"></button>
+            <button type="button" data-vm="manual" data-i18n="vmManual"></button>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="var" id="var-lbl"></label><div class="inp" id="var-box"><input id="var" data-k="varDeg" inputmode="decimal" autocomplete="off"><span class="u">°</span></div></div>
+            <div class="field"><span class="lbl" data-i18n="side"></span><div class="seg" id="varhem"><button type="button" data-hem="E">E</button><button type="button" data-hem="W">W</button></div></div>
+          </div>
+          <div class="model-line"><span class="hint" id="model-info"></span><label class="btn small quiet" for="file-cof" data-i18n="loadModel"></label><input id="file-cof" type="file" hidden></div>
+        </div>
+        <p class="hint" id="wind-hint"></p>
+      </section>
+
+      <section>
+        <h3><span data-i18n="hPerf"></span> <span id="oei-chip" class="chip warn" data-i18n="oeiChip" hidden></span></h3>
+        <div class="perf" id="perf">
+          <span></span><span class="h" data-i18n="col2"></span><span class="h" data-i18n="col1"></span>
+          <span class="rh">TAS</span>
+          <div class="inp"><input id="tasA" data-k="tasAEO" data-perf="1" inputmode="decimal" data-i18n-aria="ariaTasA" autocomplete="off"><span class="u">kt</span></div>
+          <div class="inp oei"><input id="tasO" data-k="tasOEI" data-perf="1" data-oei="1" inputmode="decimal" data-i18n-aria="ariaTasO" autocomplete="off"><span class="u">kt</span></div>
+          <span class="rh" data-i18n="ff"></span>
+          <div class="inp"><input id="ffA" data-k="ffAEO" data-perf="1" inputmode="decimal" data-i18n-aria="ariaFfA" autocomplete="off"><span class="u" data-unit-h></span></div>
+          <div class="inp oei"><input id="ffO" data-k="ffOEI" data-perf="1" data-oei="1" inputmode="decimal" data-i18n-aria="ariaFfO" autocomplete="off"><span class="u" data-unit-h></span></div>
+        </div>
+        <p class="hint" id="perf-hint"></p>
+      </section>
+
+      <section>
+        <h3 data-i18n="hFuel"></h3>
+        <div class="row2">
+          <div class="field"><label for="fuel" data-i18n="fob"></label><div class="inp"><input id="fuel" data-k="fuel" inputmode="decimal" autocomplete="off"><span class="u" data-unit></span></div></div>
+          <div class="field"><label for="res" data-i18n="reserve"></label><div class="inp"><input id="res" data-k="reserve" data-perf="1" inputmode="decimal" autocomplete="off"><span class="u" data-unit></span></div></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label for="unit" data-i18n="unit"></label><select id="unit"><option value="lb">lb</option><option value="kg">kg</option><option value="L">L</option><option value="USG">USG</option><option value="IG">IG</option></select></div>
+          <div class="field"><label for="etd" data-i18n="etd"></label><div class="inp"><input id="etd" data-k="etd" type="time" autocomplete="off"></div></div>
+        </div>
+        <p class="hint" id="fuel-hint"></p>
+      </section>
+    </aside>
+
+    <section class="results" id="results" aria-live="polite"></section>
+  </main>
+
+  <footer class="foot" data-i18n="footer"></footer>
+</div>
+<div id="drop" class="drop" data-i18n="drop" hidden></div>
+<textarea id="clip" aria-hidden="true" tabindex="-1" style="position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0"></textarea>
+<script type="text/plain" id="wmm-cof">    2025.0            WMM-2025     11/13/2024
+  1  0  -29351.8       0.0       12.0        0.0
+  1  1   -1410.8    4545.4        9.7      -21.5
+  2  0   -2556.6       0.0      -11.6        0.0
+  2  1    2951.1   -3133.6       -5.2      -27.7
+  2  2    1649.3    -815.1       -8.0      -12.1
+  3  0    1361.0       0.0       -1.3        0.0
+  3  1   -2404.1     -56.6       -4.2        4.0
+  3  2    1243.8     237.5        0.4       -0.3
+  3  3     453.6    -549.5      -15.6       -4.1
+  4  0     895.0       0.0       -1.6        0.0
+  4  1     799.5     278.6       -2.4       -1.1
+  4  2      55.7    -133.9       -6.0        4.1
+  4  3    -281.1     212.0        5.6        1.6
+  4  4      12.1    -375.6       -7.0       -4.4
+  5  0    -233.2       0.0        0.6        0.0
+  5  1     368.9      45.4        1.4       -0.5
+  5  2     187.2     220.2        0.0        2.2
+  5  3    -138.7    -122.9        0.6        0.4
+  5  4    -142.0      43.0        2.2        1.7
+  5  5      20.9     106.1        0.9        1.9
+  6  0      64.4       0.0       -0.2        0.0
+  6  1      63.8     -18.4       -0.4        0.3
+  6  2      76.9      16.8        0.9       -1.6
+  6  3    -115.7      48.8        1.2       -0.4
+  6  4     -40.9     -59.8       -0.9        0.9
+  6  5      14.9      10.9        0.3        0.7
+  6  6     -60.7      72.7        0.9        0.9
+  7  0      79.5       0.0       -0.0        0.0
+  7  1     -77.0     -48.9       -0.1        0.6
+  7  2      -8.8     -14.4       -0.1        0.5
+  7  3      59.3      -1.0        0.5       -0.8
+  7  4      15.8      23.4       -0.1        0.0
+  7  5       2.5      -7.4       -0.8       -1.0
+  7  6     -11.1     -25.1       -0.8        0.6
+  7  7      14.2      -2.3        0.8       -0.2
+  8  0      23.2       0.0       -0.1        0.0
+  8  1      10.8       7.1        0.2       -0.2
+  8  2     -17.5     -12.6        0.0        0.5
+  8  3       2.0      11.4        0.5       -0.4
+  8  4     -21.7      -9.7       -0.1        0.4
+  8  5      16.9      12.7        0.3       -0.5
+  8  6      15.0       0.7        0.2       -0.6
+  8  7     -16.8      -5.2       -0.0        0.3
+  8  8       0.9       3.9        0.2        0.2
+  9  0       4.6       0.0       -0.0        0.0
+  9  1       7.8     -24.8       -0.1       -0.3
+  9  2       3.0      12.2        0.1        0.3
+  9  3      -0.2       8.3        0.3       -0.3
+  9  4      -2.5      -3.3       -0.3        0.3
+  9  5     -13.1      -5.2        0.0        0.2
+  9  6       2.4       7.2        0.3       -0.1
+  9  7       8.6      -0.6       -0.1       -0.2
+  9  8      -8.7       0.8        0.1        0.4
+  9  9     -12.9      10.0       -0.1        0.1
+ 10  0      -1.3       0.0        0.1        0.0
+ 10  1      -6.4       3.3        0.0        0.0
+ 10  2       0.2       0.0        0.1       -0.0
+ 10  3       2.0       2.4        0.1       -0.2
+ 10  4      -1.0       5.3       -0.0        0.1
+ 10  5      -0.6      -9.1       -0.3       -0.1
+ 10  6      -0.9       0.4        0.0        0.1
+ 10  7       1.5      -4.2       -0.1        0.0
+ 10  8       0.9      -3.8       -0.1       -0.1
+ 10  9      -2.7       0.9       -0.0        0.2
+ 10 10      -3.9      -9.1       -0.0       -0.0
+ 11  0       2.9       0.0        0.0        0.0
+ 11  1      -1.5       0.0       -0.0       -0.0
+ 11  2      -2.5       2.9        0.0        0.1
+ 11  3       2.4      -0.6        0.0       -0.0
+ 11  4      -0.6       0.2        0.0        0.1
+ 11  5      -0.1       0.5       -0.1       -0.0
+ 11  6      -0.6      -0.3        0.0       -0.0
+ 11  7      -0.1      -1.2       -0.0        0.1
+ 11  8       1.1      -1.7       -0.1       -0.0
+ 11  9      -1.0      -2.9       -0.1        0.0
+ 11 10      -0.2      -1.8       -0.1        0.0
+ 11 11       2.6      -2.3       -0.1        0.0
+ 12  0      -2.0       0.0        0.0        0.0
+ 12  1      -0.2      -1.3        0.0       -0.0
+ 12  2       0.3       0.7       -0.0        0.0
+ 12  3       1.2       1.0       -0.0       -0.1
+ 12  4      -1.3      -1.4       -0.0        0.1
+ 12  5       0.6      -0.0       -0.0       -0.0
+ 12  6       0.6       0.6        0.1       -0.0
+ 12  7       0.5      -0.1       -0.0       -0.0
+ 12  8      -0.1       0.8        0.0        0.0
+ 12  9      -0.4       0.1        0.0       -0.0
+ 12 10      -0.2      -1.0       -0.1       -0.0
+ 12 11      -1.3       0.1       -0.0        0.0
+ 12 12      -0.7       0.2       -0.1       -0.1
+999999999999999999999999999999999999999999999999
+999999999999999999999999999999999999999999999999
+</script>
+<script>/* PET/PSR Navlog — silnik obliczeń (bez zależności od DOM).
+   Jednostki: odległość NM, prędkość kt, kursy w stopniach, czas w godzinach. */
+(function (root) {
+  'use strict';
+  var R_NM = 3440.065;
+  var D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+  function norm360(a) { a = a % 360; return a < 0 ? a + 360 : a; }
+
+  /* ---------- współrzędne SkyDemon: "N501200.00 E0193000.00" (DDMMSS.ss / DDDMMSS.ss) ---------- */
+  function parseCoord(str) {
+    var m = /^\s*([NS])(\d{2})(\d{2})(\d{2}(?:\.\d+)?)\s+([EW])(\d{3})(\d{2})(\d{2}(?:\.\d+)?)\s*$/.exec(str || '');
+    if (!m) return null;
+    var lat = +m[2] + m[3] / 60 + m[4] / 3600;
+    var lon = +m[6] + m[7] / 60 + m[8] / 3600;
+    if (m[1] === 'S') lat = -lat;
+    if (m[5] === 'W') lon = -lon;
+    return { lat: lat, lon: lon };
+  }
+
+  function fmtCoord(p) {
+    function part(v, w, pos, neg) {
+      var h = v >= 0 ? pos : neg; v = Math.abs(v);
+      var d = Math.floor(v), mm = (v - d) * 60;
+      if (Math.round(mm * 10) >= 600) { d += 1; mm = 0; }
+      var ds = String(d); while (ds.length < w) ds = '0' + ds;
+      var ms = mm.toFixed(1); if (mm < 10) ms = '0' + ms;
+      return h + ds + '°' + ms + '′';
+    }
+    return part(p.lat, 2, 'N', 'S') + ' ' + part(p.lon, 3, 'E', 'W');
+  }
+
+  /* ---------- loksodroma ---------- */
+  function rhumb(a, b) {
+    var p1 = a.lat * D2R, p2 = b.lat * D2R, dp = p2 - p1;
+    var dl = (b.lon - a.lon) * D2R;
+    if (Math.abs(dl) > Math.PI) dl = dl > 0 ? -(2 * Math.PI - dl) : (2 * Math.PI + dl);
+    var dpsi = Math.log(Math.tan(Math.PI / 4 + p2 / 2) / Math.tan(Math.PI / 4 + p1 / 2));
+    var q = Math.abs(dpsi) > 1e-12 ? dp / dpsi : Math.cos(p1);
+    return { dist: Math.sqrt(dp * dp + q * q * dl * dl) * R_NM, brg: norm360(Math.atan2(dl, dpsi) * R2D) };
+  }
+
+  function rhumbDest(a, brg, d) {
+    var del = d / R_NM, th = brg * D2R, p1 = a.lat * D2R;
+    var p2 = p1 + del * Math.cos(th);
+    var dpsi = Math.log(Math.tan(Math.PI / 4 + p2 / 2) / Math.tan(Math.PI / 4 + p1 / 2));
+    var q = Math.abs(dpsi) > 1e-12 ? (p2 - p1) / dpsi : Math.cos(p1);
+    var lon = a.lon + (del * Math.sin(th) / q) * R2D;
+    lon = ((lon + 540) % 360) - 180;
+    return { lat: p2 * R2D, lon: lon };
+  }
+
+  /* ---------- trójkąt wiatru (wiatr "z kierunku", rzeczywisty) ---------- */
+  function windTriangle(tc, tas, wd, ws) {
+    if (!(tas > 0)) return null;
+    var rel = (wd - tc) * D2R;
+    var cross = ws * Math.sin(rel);
+    if (Math.abs(cross) >= tas) return null;
+    var wca = Math.asin(cross / tas);
+    var gs = tas * Math.cos(wca) - ws * Math.cos(rel);
+    if (!(gs > 0.5)) return null;
+    return { gs: gs, wca: wca * R2D, th: norm360(tc + wca * R2D) };
+  }
+
+  /* ---------- prosty parser XML (elementy + atrybuty) ---------- */
+  function decodeEnt(s) {
+    return s.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos);/gi, function (_, e) {
+      var l = e.toLowerCase();
+      if (l === 'amp') return '&'; if (l === 'lt') return '<'; if (l === 'gt') return '>';
+      if (l === 'quot') return '"'; if (l === 'apos') return "'";
+      if (l.charAt(1) === 'x') return String.fromCharCode(parseInt(l.slice(2), 16));
+      return String.fromCharCode(parseInt(l.slice(1), 10));
+    });
+  }
+
+  function parseXml(text) {
+    var rootNode = { name: '#root', attrs: {}, children: [] }, stack = [rootNode];
+    var re = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<!DOCTYPE[^>]*>|<\/([\w:.-]+)\s*>|<([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
+    var m;
+    while ((m = re.exec(text))) {
+      if (m[1]) {
+        if (stack.length > 1) stack.pop();
+      } else if (m[2]) {
+        var node = { name: m[2], attrs: {}, children: [] };
+        var ar = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g, a;
+        while ((a = ar.exec(m[3] || ''))) node.attrs[a[1]] = decodeEnt(a[2] !== undefined ? a[2] : a[3]);
+        stack[stack.length - 1].children.push(node);
+        if (!m[4]) stack.push(node);
+      }
+    }
+    return rootNode;
+  }
+
+  function child(n, name) { for (var i = 0; i < n.children.length; i++) if (n.children[i].name === name) return n.children[i]; return null; }
+
+  /* ---------- jednostki paliwa ---------- */
+  var FUEL_UNITS = {
+    lb: { label: 'lb', perKg: 2.20462262, perL: null },
+    kg: { label: 'kg', perKg: 1, perL: null },
+    L: { label: 'L', perKg: null, perL: 1 },
+    USG: { label: 'USG', perKg: null, perL: 0.264172052 },
+    IG: { label: 'IG', perKg: null, perL: 0.219969248 }
+  };
+
+  /* SkyDemon zapisuje masę w kg, a objętość w litrach; wyświetla w jednostkach z ustawień. */
+  function fuelSpec(acAttrs) {
+    var type = (acAttrs.FuelMeasurementType || 'Weight').toLowerCase();
+    if (type === 'volume') {
+      var v = (acAttrs.FuelMeasurementVolumeType || 'Litres').toLowerCase();
+      if (v.indexOf('us') >= 0) return { unit: 'USG', factor: FUEL_UNITS.USG.perL };
+      if (v.indexOf('imp') >= 0 || v.indexOf('uk') >= 0) return { unit: 'IG', factor: FUEL_UNITS.IG.perL };
+      return { unit: 'L', factor: 1 };
+    }
+    var mt = (acAttrs.FuelMeasurementMassType || 'Kilograms').toLowerCase();
+    if (mt.indexOf('pound') >= 0 || mt === 'lb' || mt === 'lbs') return { unit: 'lb', factor: FUEL_UNITS.lb.perKg };
+    return { unit: 'kg', factor: 1 };
+  }
+
+  /* Windows FILETIME (100 ns od 1601-01-01) -> ms epoki Unix */
+  function fileTimeToMs(t) {
+    var n = Number(t);
+    if (!isFinite(n) || n <= 0) return null;
+    var ms = n / 1e4 - 11644473600000;
+    var y = new Date(ms).getUTCFullYear();
+    return (y > 1990 && y < 2200) ? ms : null;
+  }
+
+  /* Kilka znanych lotnisk, żeby lista legów była czytelna (dopasowanie do 3 NM). */
+  var KNOWN = [
+    ['LCPH', 'Pafos', 34.7180, 32.4857], ['LCLK', 'Larnaka', 34.8751, 33.6249],
+    ['LGRP', 'Rodos', 36.4054, 28.0862], ['LGKO', 'Kos', 36.7933, 27.0917],
+    ['LGSO', 'Syros', 37.4228, 24.9508], ['LGAV', 'Ateny', 37.9364, 23.9445],
+    ['LGIR', 'Heraklion', 35.3397, 25.1803], ['LGKR', 'Korfu', 39.6019, 19.9117],
+    ['LGTS', 'Saloniki', 40.5197, 22.9709], ['LGRX', 'Araxos', 38.1511, 21.4256],
+    ['LDDU', 'Dubrownik', 42.5614, 18.2682], ['LDSP', 'Split', 43.5389, 16.2980],
+    ['LDZD', 'Zadar', 44.1083, 15.3467], ['LDPL', 'Pula', 44.8935, 13.9222],
+    ['LDZA', 'Zagrzeb', 45.7429, 16.0688], ['LJMB', 'Maribor', 46.4799, 15.6862],
+    ['LJLJ', 'Lublana', 46.2237, 14.4576], ['LHSY', 'Szombathely', 47.2778, 16.6264],
+    ['LOWW', 'Wiedeń', 48.1103, 16.5697], ['LZIB', 'Bratysława', 48.1702, 17.2127],
+    ['LZTN', 'Trenčín', 48.8650, 17.9923], ['LKPR', 'Praga', 50.1008, 14.2600],
+    ['LHBP', 'Budapeszt', 47.4369, 19.2556], ['EPKK', 'Kraków', 50.0777, 19.7848],
+    ['EPWA', 'Warszawa', 52.1657, 20.9671], ['LTBS', 'Dalaman', 36.7131, 28.7925],
+    ['LTAI', 'Antalya', 36.8987, 30.8005]
+  ];
+  function identify(p) {
+    var best = null, bd = 3;
+    for (var i = 0; i < KNOWN.length; i++) {
+      var d = rhumb(p, { lat: KNOWN[i][2], lon: KNOWN[i][3] }).dist;
+      if (d < bd) { bd = d; best = KNOWN[i]; }
+    }
+    return best ? { icao: best[0], name: best[1] } : null;
+  }
+
+  function parseFlightPlan(text) {
+    var doc = parseXml(text);
+    var top = child(doc, 'DivelementsFlightPlanner');
+    if (!top) throw new Error('notSkyDemon');
+    var acN = child(top, 'Aircraft');
+    var acA = acN ? acN.attrs : {};
+    var fs = fuelSpec(acA);
+    var profiles = {};
+    var cps = acN && child(acN, 'CruiseProfiles');
+    if (cps) cps.children.forEach(function (c) {
+      if (c.name !== 'CruiseProfile') return;
+      profiles[c.attrs.Name] = {
+        name: c.attrs.Name,
+        airspeed: parseFloat(c.attrs.Airspeed || c.attrs.IndicatedAirspeed) || null,
+        airspeedType: c.attrs.AirspeedType || '',
+        fuelBurn: parseFloat(c.attrs.FuelBurn) ? parseFloat(c.attrs.FuelBurn) * fs.factor : null
+      };
+    });
+    var aircraft = {
+      name: (acA.Name || '').replace(/\s+/g, ' ').trim(),
+      registration: acA.Registration || '',
+      type: acA.Type || '',
+      fuelUnit: fs.unit,
+      maxFuel: parseFloat(acA.MaxFuel) ? parseFloat(acA.MaxFuel) * fs.factor : null,
+      taxiFuel: parseFloat(acA.TaxiFuel) ? parseFloat(acA.TaxiFuel) * fs.factor : 0,
+      holdingMinutes: parseFloat(acA.HoldingMinutes) || 0,
+      finalReserveMinutes: parseFloat(acA.FinalReserveMinutes) || 0,
+      contingency: parseFloat(acA.FuelContingency) || 0,
+      profiles: profiles
+    };
+    var legs = [];
+    top.children.forEach(function (r) {
+      if (r.name !== 'Route' && r.name !== 'PrimaryRoute') return;
+      var start = parseCoord(r.attrs.Start);
+      if (!start) return;
+      var pts = [{ lat: start.lat, lon: start.lon, type: r.attrs.StartType || '' }];
+      r.children.forEach(function (s) {
+        if (!s.attrs.To) return;
+        var p = parseCoord(s.attrs.To);
+        if (p) pts.push({ lat: p.lat, lon: p.lon, type: s.attrs.ToType || '', level: s.attrs.Level || '' });
+      });
+      if (pts.length < 2) return;
+      pts.forEach(function (p) { if (!/aerodrome/i.test(p.type || '')) return; var k = identify(p); if (k) { p.icao = k.icao; p.name = k.name; } });
+      var prof = profiles[r.attrs.CruiseProfile] || null;
+      legs.push({
+        primary: r.name === 'PrimaryRoute',
+        level: r.attrs.Level || '',
+        rules: r.attrs.Rules || '',
+        cruiseProfile: r.attrs.CruiseProfile || '',
+        profile: prof,
+        plannedFuel: parseFloat(r.attrs.PlannedFuel) ? parseFloat(r.attrs.PlannedFuel) * fs.factor : null,
+        timeMs: fileTimeToMs(r.attrs.Time),
+        points: pts
+      });
+    });
+    if (!legs.length) throw new Error('noRoutes');
+    return { aircraft: aircraft, legs: legs };
+  }
+
+  /* ---------- budowa odcinków ---------- */
+  function buildSegments(points) {
+    var segs = [], s = 0;
+    for (var i = 0; i < points.length - 1; i++) {
+      var r = rhumb(points[i], points[i + 1]);
+      if (r.dist < 0.01) continue;
+      segs.push({ i: i, from: points[i], to: points[i + 1], dist: r.dist, tc: r.brg, s0: s, s1: s + r.dist });
+      s += r.dist;
+    }
+    return segs;
+  }
+
+  function integ(segs, a, b, key) {
+    var t = 0;
+    for (var k = 0; k < segs.length; k++) {
+      var g = segs[k], lo = Math.max(a, g.s0), hi = Math.min(b, g.s1);
+      if (hi > lo) t += (hi - lo) / g[key];
+    }
+    return t;
+  }
+
+  function bisect(f, lo, hi) {
+    var flo = f(lo);
+    for (var n = 0; n < 80; n++) {
+      var mid = (lo + hi) / 2, fm = f(mid);
+      if ((fm > 0) === (flo > 0)) { lo = mid; flo = fm; } else hi = mid;
+      if (hi - lo < 1e-4) break;
+    }
+    return (lo + hi) / 2;
+  }
+
+  function locate(segs, s) {
+    for (var k = 0; k < segs.length; k++) {
+      var g = segs[k];
+      if (s <= g.s1 + 1e-9 || k === segs.length - 1) {
+        var into = Math.max(0, Math.min(g.dist, s - g.s0));
+        return { seg: g, into: into, toNext: g.dist - into, pos: rhumbDest(g.from, g.tc, into) };
+      }
+    }
+    return null;
+  }
+
+  /* p: { tasAEO, tasOEI, ffAEO, ffOEI, fuel, reserve, windDirT, windSpd } */
+  function compute(points, p) {
+    var out = { ok: false, errors: [], warnings: [] };
+    var segs = buildSegments(points);
+    if (!segs.length) { out.errors.push('zeroLength'); return out; }
+    var D = segs[segs.length - 1].s1;
+    var wd = p.windDirT || 0, ws = p.windSpd || 0;
+    var bad = [];
+    segs.forEach(function (g) {
+      var hc = norm360(g.tc + 180);
+      var oa = windTriangle(g.tc, p.tasAEO, wd, ws), ha = windTriangle(hc, p.tasAEO, wd, ws);
+      var oo = windTriangle(g.tc, p.tasOEI, wd, ws), ho = windTriangle(hc, p.tasOEI, wd, ws);
+      if (!oa || !ha || !oo || !ho) bad.push(g);
+      g.outAEO = oa ? oa.gs : NaN; g.homeAEO = ha ? ha.gs : NaN;
+      g.outOEI = oo ? oo.gs : NaN; g.homeOEI = ho ? ho.gs : NaN;
+      g.thAEO = oa ? oa.th : NaN; g.wcaAEO = oa ? oa.wca : NaN;
+    });
+    out.segs = segs; out.D = D;
+    if (bad.length) { out.errors.push('windTooStrong'); return out; }
+    if (!(p.tasAEO > 0) || !(p.tasOEI > 0)) { out.errors.push('noTas'); return out; }
+    if (!(p.ffAEO > 0) || !(p.ffOEI > 0)) { out.errors.push('noFf'); return out; }
+
+    var usable = p.fuel - (p.reserve || 0);
+    out.usable = usable;
+    if (!(usable > 0)) { out.errors.push('noFuel'); return out; }
+
+    function point(s, kind) {
+      var loc = locate(segs, s);
+      var t = integ(segs, 0, s, 'outAEO');
+      return {
+        kind: kind, s: s, toGo: D - s, tFromDep: t,
+        fuelRemain: p.fuel - t * p.ffAEO,
+        pos: loc.pos, seg: loc.seg, into: loc.into, toNext: loc.toNext
+      };
+    }
+
+    // PET — równy czas dalej i z powrotem (ta sama konfiguracja w obu kierunkach)
+    function pet(outKey, homeKey, ff, kind) {
+      var f = function (s) { return integ(segs, s, D, outKey) - integ(segs, 0, s, homeKey); };
+      var s = bisect(f, 0, D);
+      var r = point(s, kind);
+      r.tAfter = integ(segs, s, D, outKey);
+      r.tBack = integ(segs, 0, s, homeKey);
+      r.fuelNeeded = r.tAfter * ff;
+      r.margin = r.fuelRemain - (p.reserve || 0) - r.fuelNeeded;
+      return r;
+    }
+    out.petOEI = pet('outOEI', 'homeOEI', p.ffOEI, 'petOEI');
+    out.petAEO = pet('outAEO', 'homeAEO', p.ffAEO, 'petAEO');
+
+    // PSR — ile można lecieć na zewnątrz (AEO), by wrócić z rezerwą
+    function psr(homeKey, ffHome, kind) {
+      var g = function (s) { return p.ffAEO * integ(segs, 0, s, 'outAEO') + ffHome * integ(segs, 0, s, homeKey) - usable; };
+      var gD = g(D);
+      if (gD <= 0) {
+        var r0 = point(D, kind); r0.beyond = true; r0.surplus = -gD; r0.tHome = integ(segs, 0, D, homeKey);
+        return r0;
+      }
+      var s = bisect(g, 0, D);
+      var r = point(s, kind);
+      r.tHome = integ(segs, 0, s, homeKey);
+      r.tTotal = r.tFromDep + r.tHome;
+      return r;
+    }
+    out.psrAEO = psr('homeAEO', p.ffAEO, 'psrAEO');
+    out.psrOEI = psr('homeOEI', p.ffOEI, 'psrOEI');
+
+    // Podsumowanie trasy
+    out.tripTimeAEO = integ(segs, 0, D, 'outAEO');
+    out.tripFuelAEO = out.tripTimeAEO * p.ffAEO;
+    out.fuelAtDest = p.fuel - out.tripFuelAEO;
+    out.tripTimeOEI = integ(segs, 0, D, 'outOEI');
+
+    if (out.fuelAtDest < (p.reserve || 0)) out.warnings.push('fuelDest');
+    if (out.petOEI.margin < 0) out.warnings.push('petMargin');
+    if (!out.psrOEI.beyond && out.psrOEI.s < out.petOEI.s) out.warnings.push('psrBeforePet');
+    out.ok = true;
+    return out;
+  }
+
+  var api = {
+    R_NM: R_NM, norm360: norm360, parseCoord: parseCoord, fmtCoord: fmtCoord,
+    rhumb: rhumb, rhumbDest: rhumbDest, windTriangle: windTriangle,
+    parseXml: parseXml, parseFlightPlan: parseFlightPlan, buildSegments: buildSegments,
+    compute: compute, FUEL_UNITS: FUEL_UNITS, identify: identify
+  };
+  root.PETCore = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+<script>/* World Magnetic Model — synteza pola i deklinacja (algorytm wg raportu technicznego NOAA/BGS WMM). */
+(function (root) {
+  'use strict';
+  var D2R = Math.PI / 180, R2D = 180 / Math.PI;
+  var A_WGS = 6378.137, F_WGS = 1 / 298.257223563, E2 = F_WGS * (2 - F_WGS), A_REF = 6371.2;
+
+  /* Plik .COF: nagłówek "2025.0  WMM-2025  11/13/2024", potem wiersze "n m g h dg dh", na końcu 9999… */
+  function parseCOF(text) {
+    var lines = String(text).replace(/\r/g, '').split('\n'), head = null, rows = [];
+    for (var i = 0; i < lines.length; i++) {
+      var t = lines[i].trim();
+      if (!t) continue;
+      if (/^9{6,}/.test(t)) break;
+      var p = t.split(/\s+/);
+      if (!head) {
+        var ep = parseFloat(p[0]);
+        if (!isFinite(ep) || ep < 1900 || ep > 2200 || p.length < 2) throw new Error('cof');
+        head = { epoch: ep, name: p[1] || '', date: p[2] || '' };
+        continue;
+      }
+      if (p.length < 6) throw new Error('cof');
+      var n = +p[0], m = +p[1], v = [+p[2], +p[3], +p[4], +p[5]];
+      if (!(n >= 1) || !(m >= 0) || m > n || v.some(function (x) { return !isFinite(x); })) throw new Error('cof');
+      rows.push([n, m, v[0], v[1], v[2], v[3]]);
+    }
+    if (!head || rows.length < 3) throw new Error('cof');
+    var nmax = 0;
+    rows.forEach(function (r) { if (r[0] > nmax) nmax = r[0]; });
+    return { epoch: head.epoch, name: head.name, date: head.date, nmax: nmax, rows: rows };
+  }
+
+  function coeffs(model, year) {
+    var N = model.nmax, g = [], h = [], dt = year - model.epoch;
+    for (var n = 0; n <= N; n++) { g.push(new Array(n + 1).fill(0)); h.push(new Array(n + 1).fill(0)); }
+    model.rows.forEach(function (r) { g[r[0]][r[1]] = r[2] + dt * r[4]; h[r[0]][r[1]] = r[3] + dt * r[5]; });
+    return { g: g, h: h, N: N };
+  }
+
+  /* Schmidtowsko półznormalizowane funkcje Legendre'a P(n,m)(cosθ) i dP/dθ */
+  function legendre(N, ct, st) {
+    var P = [[1]], dP = [[0]];
+    for (var n = 1; n <= N; n++) {
+      P.push(new Array(n + 1)); dP.push(new Array(n + 1));
+      for (var m = 0; m <= n; m++) {
+        if (n === m) {
+          if (n === 1) { P[1][1] = st; dP[1][1] = ct; }
+          else {
+            var k = Math.sqrt((2 * n - 1) / (2 * n));
+            P[n][n] = k * st * P[n - 1][n - 1];
+            dP[n][n] = k * (ct * P[n - 1][n - 1] + st * dP[n - 1][n - 1]);
+          }
+        } else {
+          var a = Math.sqrt(n * n - m * m);
+          var b = n - 2 >= m ? Math.sqrt((n - 1) * (n - 1) - m * m) : 0;
+          var p2 = n - 2 >= m ? P[n - 2][m] : 0, d2 = n - 2 >= m ? dP[n - 2][m] : 0;
+          P[n][m] = ((2 * n - 1) * ct * P[n - 1][m] - b * p2) / a;
+          dP[n][m] = ((2 * n - 1) * (ct * dP[n - 1][m] - st * P[n - 1][m]) - b * d2) / a;
+        }
+      }
+    }
+    return { P: P, dP: dP };
+  }
+
+  /* Pole w układzie geocentrycznym sferycznym: r [km], θ kolatituda [rad], λ [rad] → X', Y', Z' [nT] */
+  function fieldSpherical(c, r, theta, lam) {
+    var ct = Math.cos(theta), st = Math.sin(theta);
+    if (Math.abs(st) < 1e-10) st = 1e-10;
+    var L = legendre(c.N, ct, st), X = 0, Y = 0, Z = 0, ar = A_REF / r;
+    for (var n = 1; n <= c.N; n++) {
+      var f = Math.pow(ar, n + 2);
+      for (var m = 0; m <= n; m++) {
+        var cm = Math.cos(m * lam), sm = Math.sin(m * lam);
+        var gh = c.g[n][m] * cm + c.h[n][m] * sm;
+        X += f * gh * L.dP[n][m];
+        Y += f * m * (c.g[n][m] * sm - c.h[n][m] * cm) * L.P[n][m];
+        Z -= (n + 1) * f * gh * L.P[n][m];
+      }
+    }
+    return { X: X, Y: Y / st, Z: Z };
+  }
+
+  /* lat, lon [°] geodezyjne WGS84, hKm nad elipsoidą, year — rok dziesiętny */
+  function field(model, lat, lon, hKm, year) {
+    var phi = lat * D2R, lam = lon * D2R, sp = Math.sin(phi), cp = Math.cos(phi);
+    var Rc = A_WGS / Math.sqrt(1 - E2 * sp * sp);
+    var p = (Rc + hKm) * cp, z = (Rc * (1 - E2) + hKm) * sp;
+    var r = Math.sqrt(p * p + z * z), phic = Math.asin(z / r);
+    var s = fieldSpherical(coeffs(model, year), r, Math.PI / 2 - phic, lam);
+    var psi = phic - phi;
+    var X = s.X * Math.cos(psi) - s.Z * Math.sin(psi);
+    var Z = s.X * Math.sin(psi) + s.Z * Math.cos(psi);
+    var Y = s.Y, H = Math.sqrt(X * X + Y * Y);
+    return { X: X, Y: Y, Z: Z, H: H, F: Math.sqrt(H * H + Z * Z), D: Math.atan2(Y, X) * R2D, I: Math.atan2(Z, H) * R2D };
+  }
+
+  function declination(model, lat, lon, year, hKm) { return field(model, lat, lon, hKm || 0, year).D; }
+
+  function decimalYear(ms) {
+    var d = new Date(ms), y = d.getUTCFullYear();
+    var a = Date.UTC(y, 0, 1), b = Date.UTC(y + 1, 0, 1);
+    return y + (ms - a) / (b - a);
+  }
+
+  var api = { parseCOF: parseCOF, field: field, fieldSpherical: fieldSpherical, coeffs: coeffs, legendre: legendre, declination: declination, decimalYear: decimalYear, A_REF: A_REF };
+  root.WMM = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+</script>
+<script>/* Teksty interfejsu: polski i angielski */
+window.PET_I18N = {
+  pl: {
+    offline: 'Gotowe offline', import: 'Importuj plan SkyDemon', copy: 'Kopiuj wyniki',
+    themeAuto: 'Motyw: auto', themeLight: 'Motyw: dzień', themeDark: 'Motyw: noc',
+    langBtn: 'EN', langAria: 'Switch to English',
+    modeRoute: 'Trasa SkyDemon', modeManual: 'Dane ręczne',
+    hRoute: 'Trasa', plan: 'Plan lotu', del: 'Usuń', delConfirm: 'Na pewno?', leg: 'Leg', from: 'Od punktu', to: 'Do punktu',
+    noPlans: 'Brak planów — zaimportuj plik', fuelIn: function (u) { return 'paliwo w ' + u; }, activeSD: 'aktywny w SkyDemon',
+    nameAirfield: function (c) { return 'Nazwa lotniska ' + c; }, namePh: 'np. ICAO', save: 'Zapisz', change: 'Zmień',
+    hSegment: 'Odcinek', mc: 'Kurs magnetyczny', dist: 'Odległość',
+    hWind: 'Wiatr', wd: 'Kierunek (z)', ws: 'Prędkość', refT: 'Rzeczywisty °T', refM: 'Magnetyczny °M',
+    var: 'Deklinacja magnetyczna (VAR)', vmAuto: 'Automatycznie (WMM)', vmManual: 'Ręcznie', side: 'Strona',
+    varLblAuto: 'VAR w punkcie startu', varLblManual: 'Wartość', loadModel: 'Wczytaj nowszy model',
+    modelInfo: function (name, valid) { return 'Model ' + name + ', ważny ' + valid + '.'; },
+    modelExpired: function (name, valid) { return 'Model ' + name + ' jest ważny ' + valid + ' — wczytaj nowszy plik .COF z NOAA.'; },
+    modelLoaded: function (name) { return 'Wczytano model ' + name; },
+    modelManualOnly: 'W trybie ręcznym nie ma pozycji — VAR wpisz ręcznie.',
+    hPerf: 'Osiągi', oeiChip: 'OEI przykładowe', col2: '2 silniki', col1: '1 silnik', ff: 'Spalanie',
+    ariaTasA: 'TAS dwa silniki', ariaTasO: 'TAS jeden silnik', ariaFfA: 'Spalanie dwa silniki', ariaFfO: 'Spalanie jeden silnik',
+    perfHint: 'Wartości dla jednego silnika są przykładowe. Wpisz TAS i spalanie OEI z RFM — zostaną zapamiętane dla tej rejestracji.',
+    hFuel: 'Paliwo', fob: 'Na pokładzie', reserve: 'Rezerwa', unit: 'Jednostka', etd: 'Start (UTC)',
+    footer: 'Narzędzie planistyczne. Model zakłada stałą TAS i spalanie na całym legu, jednolity wiatr, brak wznoszenia i zniżania, odcinki po loksodromach jak w SkyDemon, powrót po tej samej trasie. PET liczony dla awarii silnika (lot OEI w obie strony) oraz dla dwóch silników; PSR dla lotu na zewnątrz na dwóch silnikach z powrotem na dwóch lub na jednym. Deklinacja z World Magnetic Model (NOAA/BGS). Wyniki weryfikuj z RFM i dokumentacją operacyjną.',
+    drop: 'Upuść plik .flightplan lub model WMM (.COF)',
+    windMtoT: function (m, t) { return 'Wiatr magnetyczny ' + m + 'M = ' + t + 'T.'; },
+    windTtoM: function (t, m) { return 'Wiatr rzeczywisty ' + t + 'T = ' + m + 'M.'; },
+    courseMtoT: function (m, t) { return ' Kurs ' + m + 'M = ' + t + 'T.'; },
+    routeTrue: ' Kursy z planu są rzeczywiste; VAR służy do wyświetlenia MC i przeliczenia wiatru z ATIS.',
+    varRange: function (a, b) { return ' VAR na trasie: ' + a + ' do ' + b + '.'; },
+    reserveMin: function (m) { return 'Rezerwa ≈ ' + m + ' min przy spalaniu na dwóch silnikach. '; },
+    endurance: function (t) { return 'Wytrzymałość paliwowa: ' + t + ' bez rezerwy.'; },
+    emptyManualH: 'Podaj kurs i odległość', emptyManual: 'W trybie ręcznym potrzebny jest kurs magnetyczny i długość odcinka.',
+    emptyRouteH: 'Zaimportuj plan z SkyDemon', emptyRoute: 'W SkyDemon wybierz Udostępnij lub Eksportuj plan jako plik .flightplan, zapisz go w Plikach i użyj przycisku Importuj plan SkyDemon.',
+    fDist: 'Dystans', fSegs: 'Odcinki', fEet2: 'EET 2 silniki', fTripFuel: 'Paliwo na trasę', fFuelDest: 'Paliwo u celu', fEet1: 'EET 1 silnik', fWind: 'Wiatr',
+    error: 'Błąd', warning: 'Uwaga',
+    e_zeroLength: 'Trasa ma zerową długość.',
+    e_windTooStrong: 'Wiatr jest zbyt silny względem TAS — prędkość względem ziemi spada do zera na części odcinków.',
+    e_noTas: 'Podaj TAS dla obu konfiguracji.', e_noFf: 'Podaj spalanie dla obu konfiguracji.',
+    e_noFuel: 'Paliwo użyteczne (na pokładzie minus rezerwa) musi być większe od zera.',
+    w_fuelDest: 'Paliwa nie wystarcza do celu z zachowaniem rezerwy (na dwóch silnikach).',
+    w_petMargin: 'W punkcie PET (1 silnik) brakuje paliwa na dolot OEI do któregokolwiek końca z rezerwą.',
+    w_psrBeforePet: 'PSR (powrót OEI) leży przed PET — po jego minięciu awaria silnika nie pozwala już na powrót z rezerwą.',
+    e_notSkyDemon: 'To nie jest plik planu lotu SkyDemon (.flightplan).', e_noRoutes: 'W pliku nie znaleziono żadnej trasy.',
+    e_cof: 'To nie jest poprawny plik współczynników WMM (.COF).', e_zip: 'Nie udało się rozpakować archiwum — rozpakuj je i wczytaj plik WMM.COF.',
+    c1t: '1 silnik', c1w: 'Punkt równego czasu po awarii silnika: dalej i z powrotem na OEI.',
+    c2t: '2 silniki', c2w: 'Punkt równego czasu bez awarii, np. sytuacja medyczna lub pożar.',
+    c3t: 'powrót na 1 silniku', c3w: 'Ostatni punkt, z którego po awarii silnika wrócisz na OEI z rezerwą.',
+    c4t: 'powrót na 2 silnikach', c4w: 'Ostatni punkt, z którego wrócisz do startu z rezerwą bez awarii.',
+    beyond: 'Za celem', surplus: 'Nadwyżka paliwa', roundTrip: 'Lot tam i z powrotem',
+    beyondNote: 'Paliwa wystarczy na lot do celu i powrót z rezerwą — powrót jest możliwy z każdego punktu legu.',
+    nmFrom: function (d) { return 'NM od ' + d; }, toGo: 'Do celu', tFromDep: 'Czas od startu', fuelAt: 'Paliwo w punkcie',
+    petToDest: function (c) { return 'Z PET do celu (' + c + ')'; }, petToDep: function (c) { return 'Z PET do startu (' + c + ')'; },
+    fuelNeeded: 'Paliwo na dolot', margin: 'Zapas ponad rezerwę', tHome: 'Czas powrotu', tTotal: 'Łączny czas lotu', landing: 'lądowanie',
+    over: function (a) { return 'nad ' + a; }, afterBefore: function (d1, a, d2, b) { return d1 + ' NM za ' + a + ' · ' + d2 + ' NM do ' + b; },
+    mapAria: 'Mapa legu z punktami PET i PSR', legPet: 'PET 1 silnik (pełny) · 2 silniki (pusty)', legPsr: 'PSR powrót OEI (ciągły) · AEO (przerywany)', legRest: 'Linia przerywana: reszta legu',
+    stripAria: 'Położenie PET i PSR na legu', psrBeyond: 'PSR za celem',
+    stripCap: 'Odległości w NM od punktu startu. Kreski: punkty zwrotne. PET1/PSR1: jeden silnik, PET2/PSR2: dwa silniki.',
+    navCap: function (u, v) { return 'Navlog legu · paliwo w ' + u + ' · ' + v; },
+    navVarManual: function (v) { return 'MC przy VAR ' + v; }, navVarAuto: function (n) { return 'MC z VAR ' + n + ' dla każdego odcinka'; },
+    th: ['#', 'Do punktu', 'TC', 'VAR', 'MC', 'MH 2 sil.', 'NM', 'Σ NM', 'GS→ 2 sil.', 'GS← 2 sil.', 'GS→ 1 sil.', 'GS← 1 sil.', 'EET', 'Σ EET', 'Paliwo'],
+    total: 'Razem',
+    sumHead: 'PET/PSR', sumPet1: 'PET 1 silnik', sumPet2: 'PET 2 silniki', sumPsr1: 'PSR powrót 1 silnik', sumPsr2: 'PSR powrót 2 silniki',
+    sumBeyond: function (s) { return 'za celem (nadwyżka ' + s + ')'; }, sumFuel: 'paliwo', sumRes: 'rez', warnUp: 'UWAGA',
+    noResults: 'Brak wyników do skopiowania.', copied: 'Skopiowano wyniki', copyManual: 'Zaznacz i skopiuj ręcznie.',
+    imported: function (n, f) { return 'Zaimportowano ' + n + ' ' + (n === 1 ? 'leg' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? 'legi' : 'legów')) + ' z ' + f; },
+    importFail: function (m) { return 'Nie udało się wczytać pliku: ' + m; }, readFail: 'Nie udało się odczytać pliku.'
+  },
+  en: {
+    offline: 'Offline ready', import: 'Import SkyDemon plan', copy: 'Copy results',
+    themeAuto: 'Theme: auto', themeLight: 'Theme: day', themeDark: 'Theme: night',
+    langBtn: 'PL', langAria: 'Przełącz na polski',
+    modeRoute: 'SkyDemon route', modeManual: 'Manual entry',
+    hRoute: 'Route', plan: 'Flight plan', del: 'Delete', delConfirm: 'Sure?', leg: 'Leg', from: 'From point', to: 'To point',
+    noPlans: 'No plans — import a file', fuelIn: function (u) { return 'fuel in ' + u; }, activeSD: 'active in SkyDemon',
+    nameAirfield: function (c) { return 'Airfield name ' + c; }, namePh: 'e.g. ICAO', save: 'Save', change: 'Change',
+    hSegment: 'Segment', mc: 'Magnetic course', dist: 'Distance',
+    hWind: 'Wind', wd: 'Direction (from)', ws: 'Speed', refT: 'True °T', refM: 'Magnetic °M',
+    var: 'Magnetic variation (VAR)', vmAuto: 'Automatic (WMM)', vmManual: 'Manual', side: 'Side',
+    varLblAuto: 'VAR at departure', varLblManual: 'Value', loadModel: 'Load newer model',
+    modelInfo: function (name, valid) { return 'Model ' + name + ', valid ' + valid + '.'; },
+    modelExpired: function (name, valid) { return 'Model ' + name + ' is valid ' + valid + ' — load a newer .COF file from NOAA.'; },
+    modelLoaded: function (name) { return 'Loaded model ' + name; },
+    modelManualOnly: 'Manual entry has no position — enter VAR by hand.',
+    hPerf: 'Performance', oeiChip: 'OEI sample values', col2: '2 engines', col1: '1 engine', ff: 'Fuel flow',
+    ariaTasA: 'TAS two engines', ariaTasO: 'TAS one engine', ariaFfA: 'Fuel flow two engines', ariaFfO: 'Fuel flow one engine',
+    perfHint: 'One-engine values are samples. Enter OEI TAS and fuel flow from the RFM — they are remembered for this registration.',
+    hFuel: 'Fuel', fob: 'On board', reserve: 'Reserve', unit: 'Unit', etd: 'Departure (UTC)',
+    footer: 'Planning tool. The model assumes constant TAS and fuel flow over the leg, a single wind, no climb or descent, rhumb-line segments as in SkyDemon, and a return along the same route. PET is computed for an engine failure (OEI both ways) and for both engines; PSR for outbound on both engines with return on two or one. Variation from the World Magnetic Model (NOAA/BGS). Verify results against the RFM and operational documents.',
+    drop: 'Drop a .flightplan file or WMM model (.COF)',
+    windMtoT: function (m, t) { return 'Magnetic wind ' + m + 'M = ' + t + 'T.'; },
+    windTtoM: function (t, m) { return 'True wind ' + t + 'T = ' + m + 'M.'; },
+    courseMtoT: function (m, t) { return ' Course ' + m + 'M = ' + t + 'T.'; },
+    routeTrue: ' Plan courses are true; VAR is used to show MC and to convert ATIS wind.',
+    varRange: function (a, b) { return ' VAR along the route: ' + a + ' to ' + b + '.'; },
+    reserveMin: function (m) { return 'Reserve ≈ ' + m + ' min at two-engine fuel flow. '; },
+    endurance: function (t) { return 'Endurance: ' + t + ' excluding reserve.'; },
+    emptyManualH: 'Enter course and distance', emptyManual: 'Manual entry needs a magnetic course and a segment length.',
+    emptyRouteH: 'Import a SkyDemon plan', emptyRoute: 'In SkyDemon, share or export the plan as a .flightplan file, save it to Files and use Import SkyDemon plan.',
+    fDist: 'Distance', fSegs: 'Segments', fEet2: 'EET 2 engines', fTripFuel: 'Trip fuel', fFuelDest: 'Fuel at destination', fEet1: 'EET 1 engine', fWind: 'Wind',
+    error: 'Error', warning: 'Caution',
+    e_zeroLength: 'The route has zero length.',
+    e_windTooStrong: 'The wind is too strong for the TAS — ground speed drops to zero on some segments.',
+    e_noTas: 'Enter TAS for both configurations.', e_noFf: 'Enter fuel flow for both configurations.',
+    e_noFuel: 'Usable fuel (on board minus reserve) must be greater than zero.',
+    w_fuelDest: 'Not enough fuel to reach the destination with reserve (two engines).',
+    w_petMargin: 'At the PET (one engine) there is not enough fuel to reach either end OEI with reserve.',
+    w_psrBeforePet: 'The PSR (OEI return) lies before the PET — beyond it, an engine failure no longer allows a return with reserve.',
+    e_notSkyDemon: 'This is not a SkyDemon flight plan (.flightplan).', e_noRoutes: 'No route found in the file.',
+    e_cof: 'This is not a valid WMM coefficient file (.COF).', e_zip: 'Could not unpack the archive — unzip it and load WMM.COF.',
+    c1t: '1 engine', c1w: 'Equal-time point after an engine failure: onward and back on OEI.',
+    c2t: '2 engines', c2w: 'Equal-time point without a failure, e.g. medical or fire.',
+    c3t: 'return on 1 engine', c3w: 'Last point from which you can return OEI with reserve after an engine failure.',
+    c4t: 'return on 2 engines', c4w: 'Last point from which you can return to departure with reserve, no failure.',
+    beyond: 'Beyond destination', surplus: 'Fuel surplus', roundTrip: 'Round trip',
+    beyondNote: 'There is enough fuel to fly to the destination and back with reserve — a return is possible from any point of the leg.',
+    nmFrom: function (d) { return 'NM from ' + d; }, toGo: 'To destination', tFromDep: 'Time from departure', fuelAt: 'Fuel at point',
+    petToDest: function (c) { return 'PET to destination (' + c + ')'; }, petToDep: function (c) { return 'PET to departure (' + c + ')'; },
+    fuelNeeded: 'Fuel required', margin: 'Margin over reserve', tHome: 'Return time', tTotal: 'Total flight time', landing: 'landing',
+    over: function (a) { return 'over ' + a; }, afterBefore: function (d1, a, d2, b) { return d1 + ' NM past ' + a + ' · ' + d2 + ' NM to ' + b; },
+    mapAria: 'Leg map with PET and PSR', legPet: 'PET 1 engine (filled) · 2 engines (hollow)', legPsr: 'PSR OEI return (solid) · AEO (dashed)', legRest: 'Dashed line: rest of the leg',
+    stripAria: 'PET and PSR along the leg', psrBeyond: 'PSR beyond destination',
+    stripCap: 'Distances in NM from departure. Ticks: turning points. PET1/PSR1: one engine, PET2/PSR2: two engines.',
+    navCap: function (u, v) { return 'Leg navlog · fuel in ' + u + ' · ' + v; },
+    navVarManual: function (v) { return 'MC with VAR ' + v; }, navVarAuto: function (n) { return 'MC with ' + n + ' VAR per segment'; },
+    th: ['#', 'To point', 'TC', 'VAR', 'MC', 'MH 2 eng.', 'NM', 'Σ NM', 'GS→ 2 eng.', 'GS← 2 eng.', 'GS→ 1 eng.', 'GS← 1 eng.', 'EET', 'Σ EET', 'Fuel'],
+    total: 'Total',
+    sumHead: 'PET/PSR', sumPet1: 'PET 1 engine', sumPet2: 'PET 2 engines', sumPsr1: 'PSR return 1 engine', sumPsr2: 'PSR return 2 engines',
+    sumBeyond: function (s) { return 'beyond destination (surplus ' + s + ')'; }, sumFuel: 'fuel', sumRes: 'res', warnUp: 'CAUTION',
+    noResults: 'No results to copy.', copied: 'Results copied', copyManual: 'Select and copy manually.',
+    imported: function (n, f) { return 'Imported ' + n + ' leg' + (n === 1 ? '' : 's') + ' from ' + f; },
+    importFail: function (m) { return 'Could not load the file: ' + m; }, readFail: 'Could not read the file.'
+  }
+};
+</script>
+<script>(function () {
+  'use strict';
+  var C = window.PETCore, WMM = window.WMM, DICT = window.PET_I18N;
+  var IS_PWA = !!window.__PWA;
+  var $ = function (id) { return document.getElementById(id); };
+  var each = function (sel, fn) { Array.prototype.forEach.call(document.querySelectorAll(sel), fn); };
+
+  /* ---------- pamięć lokalna ---------- */
+  var LS = {
+    get: function (k, d) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* brak pamięci */ } }
+  };
+  var K = { state: 'petpsr.v1.state', plans: 'petpsr.v1.plans', names: 'petpsr.v1.names', perf: 'petpsr.v1.perf', theme: 'petpsr.v1.theme', lang: 'petpsr.v1.lang', wmm: 'petpsr.v1.wmm' };
+
+  var DEFAULTS = {
+    mode: 'route', planId: null, legIdx: 0, fromIdx: 0, toIdx: -1,
+    windDir: '300', windSpd: '20', windRef: 'T', varMode: 'auto', varDeg: '5', varHem: 'E',
+    tasAEO: '120', tasOEI: '100', ffAEO: '900', ffOEI: '650',
+    fuel: '2300', reserve: '300', unit: 'lb', etd: '', mc: '270', dist: '180', oeiExample: true
+  };
+  var state = Object.assign({}, DEFAULTS, LS.get(K.state, {}));
+  var plans = LS.get(K.plans, []);
+  var names = LS.get(K.names, {});
+  var perf = LS.get(K.perf, {});
+  var lang = LS.get(K.lang, 'pl') === 'en' ? 'en' : 'pl';
+
+  function save() { LS.set(K.state, state); }
+  function savePlans() { LS.set(K.plans, plans); }
+
+  /* ---------- tłumaczenia ---------- */
+  function T(key) {
+    var v = DICT[lang][key]; if (v === undefined) v = DICT.pl[key];
+    if (typeof v === 'function') return v.apply(null, Array.prototype.slice.call(arguments, 1));
+    return v === undefined ? key : v;
+  }
+  function msg(code, kind) { var k = (kind || 'e') + '_' + code; return DICT[lang][k] || DICT.pl[k] || code; }
+  function applyStatic() {
+    document.documentElement.lang = lang;
+    each('[data-i18n]', function (el) { el.textContent = T(el.getAttribute('data-i18n')); });
+    each('[data-i18n-aria]', function (el) { el.setAttribute('aria-label', T(el.getAttribute('data-i18n-aria'))); });
+    $('lang').textContent = T('langBtn'); $('lang').setAttribute('aria-label', T('langAria'));
+    if (IS_PWA) applyTheme();
+  }
+
+  /* ---------- model magnetyczny ---------- */
+  var builtinModel = null, userModel = LS.get(K.wmm, null);
+  try { var cofEl = $('wmm-cof'); if (cofEl && cofEl.textContent.indexOf('/*WMM') !== 0) builtinModel = WMM.parseCOF(cofEl.textContent); } catch (e) { builtinModel = null; }
+  function model() {
+    if (userModel && (!builtinModel || userModel.epoch >= builtinModel.epoch)) return userModel;
+    return builtinModel || userModel;
+  }
+  function modelValid(m) { return Math.floor(m.epoch) + '–' + (Math.ceil(m.epoch + 5) - 1); }
+  function legYear() {
+    var leg = state.mode === 'route' ? curLeg() : null;
+    return WMM.decimalYear(leg && leg.timeMs ? leg.timeMs : Date.now());
+  }
+
+  /* ---------- formatowanie ---------- */
+  function num(v) { var n = parseFloat(String(v == null ? '' : v).replace(',', '.').trim()); return isFinite(n) ? n : NaN; }
+  function f1(x) { return isFinite(x) ? x.toFixed(1) : '—'; }
+  function f0(x) { return isFinite(x) ? String(Math.round(x)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ') : '—'; }
+  function deg(x) { if (!isFinite(x)) return '—'; var d = Math.round(C.norm360(x)) % 360; if (d === 0) d = 360; return ('00' + d).slice(-3) + '°'; }
+  function vfmt(v) { return isFinite(v) ? Math.abs(v).toFixed(1) + '°' + (v < 0 ? 'W' : 'E') : '—'; }
+  function hm(h) { if (!isFinite(h)) return '—'; var m = Math.round(h * 60); var s = m < 0 ? '−' : ''; m = Math.abs(m); return s + Math.floor(m / 60) + ':' + ('0' + (m % 60)).slice(-2); }
+  function clock(h) {
+    if (!state.etd || !/^\d{1,2}:\d{2}/.test(state.etd) || !isFinite(h)) return '';
+    var p = state.etd.split(':'), m = (+p[0]) * 60 + (+p[1]) + Math.round(h * 60);
+    m = ((m % 1440) + 1440) % 1440;
+    return ('0' + Math.floor(m / 60)).slice(-2) + ':' + ('0' + (m % 60)).slice(-2) + 'Z';
+  }
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function unit() { return state.unit || 'lb'; }
+  function manualVar() { var v = num(state.varDeg); if (!isFinite(v)) v = 0; return state.varHem === 'W' ? -v : v; }
+
+  /* ---------- plany ---------- */
+  function ptKey(p) { return p.lat.toFixed(4) + ',' + p.lon.toFixed(4); }
+  function ptShort(p, idx) { var k = ptKey(p); if (names[k]) return names[k]; if (p.icao) return p.icao; return idx != null ? 'WPT ' + idx : C.fmtCoord(p); }
+  function ptLong(p, idx) {
+    var k = ptKey(p);
+    if (names[k]) return { code: names[k], name: '' };
+    if (p.icao) return { code: p.icao, name: p.name || '' };
+    if (/aerodrome/i.test(p.type || '')) return { code: C.fmtCoord(p), name: '' };
+    return { code: idx != null ? 'WPT ' + idx : C.fmtCoord(p), name: '' };
+  }
+
+  function addPlan(text, fileName) {
+    var data = C.parseFlightPlan(text);
+    var id = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    plans = plans.filter(function (p) { return p.fileName !== fileName; });
+    plans.unshift({ id: id, fileName: fileName, importedAt: Date.now(), data: data });
+    if (plans.length > 12) plans.length = 12;
+    savePlans();
+    return id;
+  }
+
+  function findPlan(id) { for (var i = 0; i < plans.length; i++) if (plans[i].id === id) return plans[i]; return null; }
+  function curPlan() { var p = findPlan(state.planId); if (!p && plans.length) { state.planId = plans[0].id; p = plans[0]; } return p; }
+  function curLeg() { var p = curPlan(); if (!p) return null; var l = p.data.legs[state.legIdx]; if (!l) { state.legIdx = 0; l = p.data.legs[0]; } return l; }
+
+  function applyLeg(idx) {
+    var p = curPlan(); if (!p) return;
+    var ac = p.data.aircraft, leg = p.data.legs[idx]; if (!leg) return;
+    state.legIdx = idx; state.fromIdx = 0; state.toIdx = leg.points.length - 1;
+    state.unit = ac.fuelUnit || state.unit;
+    if (leg.plannedFuel) state.fuel = String(Math.round(leg.plannedFuel));
+    var stored = ac.registration && perf[ac.registration];
+    if (stored) {
+      ['tasAEO', 'tasOEI', 'ffAEO', 'ffOEI', 'reserve'].forEach(function (k) { if (stored[k] != null && stored[k] !== '') state[k] = stored[k]; });
+      state.oeiExample = !!stored.oeiExample;
+    } else if (leg.profile) {
+      if (leg.profile.airspeed) state.tasAEO = String(Math.round(leg.profile.airspeed));
+      if (leg.profile.fuelBurn) state.ffAEO = String(Math.round(leg.profile.fuelBurn));
+      if (ac.holdingMinutes && leg.profile.fuelBurn) state.reserve = String(Math.round(ac.holdingMinutes / 60 * leg.profile.fuelBurn / 10) * 10);
+    }
+    if (leg.timeMs) { var d = new Date(leg.timeMs); state.etd = ('0' + d.getUTCHours()).slice(-2) + ':' + ('0' + d.getUTCMinutes()).slice(-2); }
+    else state.etd = '';
+  }
+
+  function storePerf() {
+    var p = curPlan(); if (state.mode !== 'route' || !p || !p.data.aircraft.registration) return;
+    perf[p.data.aircraft.registration] = { tasAEO: state.tasAEO, tasOEI: state.tasOEI, ffAEO: state.ffAEO, ffOEI: state.ffOEI, reserve: state.reserve, oeiExample: state.oeiExample };
+    LS.set(K.perf, perf);
+  }
+
+  /* ---------- deklinacja dla bieżącej trasy ---------- */
+  function autoVarActive() { return state.varMode === 'auto' && state.mode === 'route' && !!model(); }
+  function varCtx(points) {
+    if (autoVarActive() && points && points.length) {
+      var m = model(), y = legYear();
+      var at = function (p) { return WMM.declination(m, p.lat, p.lon, y); };
+      return { auto: true, dep: at(points[0]), seg: function (g) { return at(C.rhumbDest(g.from, g.tc, g.dist / 2)); }, at: at };
+    }
+    var v = manualVar();
+    return { auto: false, dep: v, seg: function () { return v; }, at: function () { return v; } };
+  }
+
+  /* ---------- panel wejściowy ---------- */
+  function setPressed(container, attr, val) {
+    each('#' + container + ' button', function (b) { b.setAttribute('aria-pressed', String(b.getAttribute(attr) === val)); });
+  }
+  function legDist(leg) { var s = C.buildSegments(leg.points); return s.length ? s[s.length - 1].s1 : 0; }
+
+  function renderInputs() {
+    setPressed('mode', 'data-mode', state.mode);
+    setPressed('windref', 'data-ref', state.windRef);
+    $('route-src').hidden = state.mode !== 'route';
+    $('manual-src').hidden = state.mode !== 'manual';
+    each('[data-k]', function (el) { if (document.activeElement !== el) el.value = state[el.getAttribute('data-k')] == null ? '' : state[el.getAttribute('data-k')]; });
+    $('unit').value = unit();
+    each('[data-unit]', function (el) { el.textContent = unit(); });
+    each('[data-unit-h]', function (el) { el.textContent = unit() + '/h'; });
+    $('oei-chip').hidden = !state.oeiExample;
+    $('perf').classList.toggle('example', !!state.oeiExample);
+    $('perf-hint').textContent = state.oeiExample ? T('perfHint') : '';
+    $('perf-hint').className = 'hint' + (state.oeiExample ? ' warn' : '');
+    renderVarControls();
+
+    var p = curPlan();
+    var sel = $('plan');
+    sel.innerHTML = plans.length ? plans.map(function (pl) { return '<option value="' + pl.id + '">' + esc(pl.fileName.replace(/\.flightplan$/i, '')) + '</option>'; }).join('') : '<option value="">' + esc(T('noPlans')) + '</option>';
+    if (p) sel.value = p.id;
+    $('delplan').hidden = !p;
+    if (!p) { $('legs').innerHTML = ''; $('from').innerHTML = ''; $('to').innerHTML = ''; $('plan-meta').textContent = ''; $('namer').innerHTML = ''; return; }
+    var ac = p.data.aircraft;
+    $('plan-meta').textContent = [ac.registration, ac.type, ac.name && ac.name !== ac.registration ? ac.name : '', T('fuelIn', ac.fuelUnit)].filter(Boolean).join(' · ');
+
+    $('legs').innerHTML = p.data.legs.map(function (l, i) {
+      var a = l.points[0], b = l.points[l.points.length - 1];
+      var meta = [l.cruiseProfile, l.primary ? T('activeSD') : '', l.timeMs ? new Date(l.timeMs).toISOString().slice(0, 10) : ''].filter(Boolean).join(' · ');
+      return '<button type="button" class="leg" data-leg="' + i + '" aria-pressed="' + (i === state.legIdx) + '">' +
+        '<span class="n">' + (i + 1) + '</span><span class="rt">' + esc(ptShort(a)) + ' → ' + esc(ptShort(b)) + '</span><span class="d">' + f1(legDist(l)) + ' NM</span>' +
+        (meta ? '<span class="meta">' + esc(meta) + '</span>' : '') + '</button>';
+    }).join('');
+
+    var leg = curLeg();
+    if (state.toIdx < 0 || state.toIdx >= leg.points.length) state.toIdx = leg.points.length - 1;
+    if (state.fromIdx >= state.toIdx) state.fromIdx = 0;
+    var opts = leg.points.map(function (pt, i) {
+      var l = ptLong(pt, i);
+      return '<option value="' + i + '">' + i + ' · ' + esc(l.code + (l.name ? ' ' + l.name : '')) + '</option>';
+    });
+    $('from').innerHTML = opts.slice(0, -1).join('');
+    $('to').innerHTML = opts.map(function (o, i) { return i === 0 ? '' : o; }).join('');
+    $('from').value = String(state.fromIdx);
+    $('to').value = String(state.toIdx);
+
+    var unnamed = [];
+    leg.points.forEach(function (pt, i) { if (!pt.icao && !names[ptKey(pt)] && /aerodrome/i.test(pt.type || '')) unnamed.push({ pt: pt, i: i }); });
+    var named = leg.points.filter(function (pt) { return names[ptKey(pt)]; });
+    var html = '';
+    if (unnamed.length || named.length) {
+      html = '<div class="namer">' + unnamed.map(function (u) {
+        var k = ptKey(u.pt);
+        return '<div class="field"><label for="nm-' + u.i + '">' + esc(T('nameAirfield', C.fmtCoord(u.pt))) + '</label><div class="row"><div class="inp"><input id="nm-' + u.i + '" data-name-key="' + k + '" placeholder="' + esc(T('namePh')) + '" autocomplete="off" autocapitalize="characters"></div><button type="button" class="btn small" data-name-save="' + k + '">' + esc(T('save')) + '</button></div></div>';
+      }).join('') + named.map(function (pt) {
+        var k = ptKey(pt);
+        return '<p class="hint">' + esc(names[k]) + ' = ' + esc(C.fmtCoord(pt)) + ' <button type="button" class="btn small quiet" data-name-clear="' + k + '">' + esc(T('change')) + '</button></p>';
+      }).join('') + '</div>';
+    }
+    $('namer').innerHTML = html;
+  }
+
+  function renderVarControls() {
+    var m = model(), autoPossible = !!m && state.mode === 'route';
+    setPressed('varmode', 'data-vm', autoPossible ? state.varMode : 'manual');
+    each('#varmode button[data-vm="auto"]', function (b) { b.disabled = !autoPossible; });
+    var auto = autoVarActive(), inp = $('var');
+    $('var-lbl').textContent = T(auto ? 'varLblAuto' : 'varLblManual');
+    $('var-box').classList.toggle('ro', auto);
+    inp.readOnly = auto;
+    var shownHem = state.varHem;
+    if (auto) {
+      var src = currentPoints(), v = src ? varCtx(src.points).dep : NaN;
+      if (document.activeElement !== inp) inp.value = isFinite(v) ? Math.abs(v).toFixed(1) : '';
+      shownHem = v < 0 ? 'W' : 'E';
+    } else if (document.activeElement !== inp) inp.value = state.varDeg;
+    setPressed('varhem', 'data-hem', shownHem);
+    each('#varhem button', function (b) { b.disabled = auto; });
+    var info = '';
+    if (state.mode === 'manual' && state.varMode === 'auto') info = T('modelManualOnly');
+    else if (m) {
+      var y = legYear();
+      info = (y < m.epoch || y >= m.epoch + 5) ? T('modelExpired', m.name, modelValid(m)) : T('modelInfo', m.name, modelValid(m));
+    }
+    $('model-info').textContent = info;
+    $('model-info').className = 'hint' + (m && (legYear() >= m.epoch + 5 || legYear() < m.epoch) ? ' warn' : '');
+  }
+
+  /* ---------- obliczenia ---------- */
+  function params(vc) {
+    var wd = num(state.windDir), ws = num(state.windSpd);
+    if (!isFinite(wd)) wd = 0; if (!isFinite(ws)) ws = 0;
+    var windT = state.windRef === 'M' ? wd + vc.dep : wd;
+    return {
+      tasAEO: num(state.tasAEO), tasOEI: num(state.tasOEI), ffAEO: num(state.ffAEO), ffOEI: num(state.ffOEI),
+      fuel: num(state.fuel), reserve: isFinite(num(state.reserve)) ? num(state.reserve) : 0,
+      windDirT: C.norm360(windT), windSpd: ws
+    };
+  }
+
+  function currentPoints() {
+    if (state.mode === 'manual') {
+      var mc = num(state.mc), d = num(state.dist);
+      if (!isFinite(mc) || !(d > 0)) return null;
+      var tc = C.norm360(mc + manualVar());
+      var A = { lat: 0, lon: 0 };
+      var B = C.rhumbDest(A, tc, d);
+      return { points: [A, B], offset: 0, manual: true };
+    }
+    var leg = curLeg(); if (!leg) return null;
+    return { points: leg.points.slice(state.fromIdx, state.toIdx + 1), offset: state.fromIdx, manual: false };
+  }
+
+  /* ---------- wyniki ---------- */
+  var last = null;
+
+  function render() {
+    var src = currentPoints();
+    var vc = varCtx(src ? src.points : null);
+    renderHints(src, vc);
+    var res = $('results');
+    if (!src) {
+      var man = state.mode === 'manual';
+      res.innerHTML = '<div class="empty"><h2>' + esc(T(man ? 'emptyManualH' : 'emptyRouteH')) + '</h2><p class="hint">' + esc(T(man ? 'emptyManual' : 'emptyRoute')) + '</p></div>';
+      last = null; return;
+    }
+    var p = params(vc);
+    var r = C.compute(src.points, p);
+    last = { r: r, src: src, p: p, vc: vc };
+    var pts = src.points, off = src.offset;
+    var dep = pts[0], dest = pts[pts.length - 1];
+    var depL = src.manual ? { code: 'DEP', name: '' } : ptLong(dep, off);
+    var destL = src.manual ? { code: 'DEST', name: '' } : ptLong(dest, off + pts.length - 1);
+    var depShort = src.manual ? 'DEP' : ptShort(dep, off);
+
+    var h = '<div class="leghead"><h1 class="route">' + esc(depL.code) + (depL.name ? ' <span class="nm">' + esc(depL.name) + '</span>' : '') +
+      '<span class="ar">→</span>' + esc(destL.code) + (destL.name ? ' <span class="nm">' + esc(destL.name) + '</span>' : '') + '</h1>';
+    if (r.segs) {
+      h += '<dl class="facts">' +
+        fact(T('fDist'), f1(r.D) + ' NM') +
+        fact(T('fSegs'), String(r.segs.length)) +
+        (r.ok ? fact(T('fEet2'), hm(r.tripTimeAEO)) + fact(T('fTripFuel'), f0(r.tripFuelAEO) + ' ' + unit()) + fact(T('fFuelDest'), f0(r.fuelAtDest) + ' ' + unit()) + fact(T('fEet1'), hm(r.tripTimeOEI)) : '') +
+        fact(T('fWind'), deg(p.windDirT) + 'T / ' + f0(p.windSpd) + ' kt') +
+        '</dl>';
+    }
+    h += '</div>';
+
+    if (r.errors.length || r.warnings.length) {
+      h += '<div class="alerts">' + r.errors.map(function (e) { return '<div class="alert bad"><b>' + esc(T('error')) + '</b><span>' + esc(msg(e, 'e')) + '</span></div>'; }).join('') +
+        r.warnings.map(function (e) { return '<div class="alert warn"><b>' + esc(T('warning')) + '</b><span>' + esc(msg(e, 'w')) + '</span></div>'; }).join('') + '</div>';
+    }
+    if (!r.ok) { res.innerHTML = h; return; }
+
+    h += '<div class="cards">' +
+      card('pet', false, 'PET', T('c1t'), T('c1w'), r.petOEI, r, src, depShort) +
+      card('pet', true, 'PET', T('c2t'), T('c2w'), r.petAEO, r, src, depShort) +
+      card('psr', false, 'PSR', T('c3t'), T('c3w'), r.psrOEI, r, src, depShort) +
+      card('psr', true, 'PSR', T('c4t'), T('c4w'), r.psrAEO, r, src, depShort) +
+      '</div>';
+
+    h += '<div class="figs">' + stripFig(r, src, depShort, src.manual ? 'DEST' : ptShort(dest, off + pts.length - 1)) + (src.manual ? '' : mapFig(r, src)) + '</div>';
+    h += navlog(r, src, vc);
+    res.innerHTML = h;
+  }
+
+  function fact(k, v) { return '<div><dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd></div>'; }
+
+  function wptRef(x, src) {
+    var i0 = x.seg.i, from = src.points[i0], to = src.points[i0 + 1];
+    var a = src.manual ? 'DEP' : ptShort(from, src.offset + i0), b = src.manual ? 'DEST' : ptShort(to, src.offset + i0 + 1);
+    if (x.into < 0.05) return T('over', a);
+    if (x.toNext < 0.05) return T('over', b);
+    return T('afterBefore', f1(x.into), a, f1(x.toNext), b);
+  }
+
+  function card(type, secondary, tag, title, why, x, r, src, depShort) {
+    var u = unit(), isPet = type === 'pet';
+    var h = '<article class="card ' + type + (secondary ? ' sec' : '') + '"><header><span class="tag">' + tag + '</span><h2>' + esc(title) + '</h2><span class="why">' + esc(why) + '</span></header>';
+    if (!isPet && x.beyond) {
+      h += '<div class="big"><span class="num txt">' + esc(T('beyond')) + '</span></div><dl class="kv">' +
+        kv(T('surplus'), f0(x.surplus) + ' ' + u, 'good') +
+        kv(T('roundTrip'), hm(r.tripTimeAEO + x.tHome)) + '</dl>' +
+        '<p class="pos"><span>' + esc(T('beyondNote')) + '</span></p></article>';
+      return h;
+    }
+    h += '<div class="big"><span class="num">' + f1(x.s) + '</span><span class="u">' + esc(T('nmFrom', depShort)) + '</span></div><dl class="kv">' +
+      kv(T('toGo'), f1(x.toGo) + ' NM') +
+      kv(T('tFromDep'), hm(x.tFromDep), '', clock(x.tFromDep)) +
+      kv(T('fuelAt'), f0(x.fuelRemain) + ' ' + u);
+    if (isPet) {
+      var cfg = x.kind === 'petOEI' ? 'OEI' : 'AEO';
+      h += kv(T('petToDest', cfg), hm(x.tAfter)) + kv(T('petToDep', cfg), hm(x.tBack)) + kv(T('fuelNeeded'), f0(x.fuelNeeded) + ' ' + u) +
+        kv(T('margin'), (x.margin >= 0 ? '+' : '−') + f0(Math.abs(x.margin)) + ' ' + u, x.margin < 0 ? 'bad' : 'good');
+    } else {
+      var land = clock(x.tTotal);
+      h += kv(T('tHome'), hm(x.tHome)) + kv(T('tTotal'), hm(x.tTotal), '', land ? T('landing') + ' ' + land : '');
+    }
+    h += '</dl><p class="pos">' + (src.manual ? '' : '<span class="coord">' + C.fmtCoord(x.pos) + '</span>') + '<span>' + esc(wptRef(x, src)) + '</span></p></article>';
+    return h;
+  }
+
+  function kv(k, v, cls, small) {
+    return '<div><dt>' + esc(k) + '</dt><dd' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(v) + (small ? ' <small>· ' + esc(small) + '</small>' : '') + '</dd></div>';
+  }
+
+  /* --- mapa trasy --- */
+  function mapFig(r, src) {
+    var all = curLeg().points;
+    var W = 640, H = 380, pad = 34;
+    var lat0 = 0, minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+    all.forEach(function (p) { lat0 += p.lat; }); lat0 /= all.length;
+    var k = Math.cos(lat0 * Math.PI / 180);
+    function px(p) { return { x: p.lon * k, y: -p.lat }; }
+    all.forEach(function (p) { var q = px(p); minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x); minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y); });
+    var spanX = Math.max(maxX - minX, 0.2), spanY = Math.max(maxY - minY, 0.2);
+    var sc = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
+    var ox = (W - spanX * sc) / 2 - minX * sc, oy = (H - spanY * sc) / 2 - minY * sc;
+    function P(p) { var q = px(p); return [(q.x * sc + ox), (q.y * sc + oy)]; }
+    function xy(p) { var a = P(p); return a[0].toFixed(1) + ',' + a[1].toFixed(1); }
+
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(T('mapAria')) + '">';
+    s += '<rect width="' + W + '" height="' + H + '" rx="6" fill="var(--sea)"/>';
+    var latMin = Math.floor(-(maxY + (H / 2) / sc)), latMax = Math.ceil(-(minY - (H / 2) / sc));
+    var lonMin = Math.floor((minX - W / sc) / k), lonMax = Math.ceil((maxX + W / sc) / k);
+    var step = (spanY > 3 || spanX > 3) ? 1 : 0.5;
+    for (var la = Math.ceil(latMin / step) * step; la <= latMax; la += step) {
+      var y = (-la) * sc + oy; if (y < 4 || y > H - 4) continue;
+      s += '<line x1="0" x2="' + W + '" y1="' + y.toFixed(1) + '" y2="' + y.toFixed(1) + '" stroke="var(--rule)" stroke-width="1"/>';
+      s += '<text class="svg-t" x="6" y="' + (y - 4).toFixed(1) + '">' + gridLbl(la, 'N', 'S') + '</text>';
+    }
+    for (var lo = Math.ceil(lonMin / step) * step; lo <= lonMax; lo += step) {
+      var x = lo * k * sc + ox; if (x < 4 || x > W - 4) continue;
+      s += '<line y1="0" y2="' + H + '" x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" stroke="var(--rule)" stroke-width="1"/>';
+      s += '<text class="svg-t" x="' + (x + 4).toFixed(1) + '" y="' + (H - 6) + '">' + gridLbl(lo, 'E', 'W') + '</text>';
+    }
+    s += '<polyline fill="none" stroke="var(--ink-2)" stroke-opacity=".45" stroke-width="2" stroke-dasharray="4 4" points="' + all.map(xy).join(' ') + '"/>';
+    s += '<polyline fill="none" stroke="var(--ink)" stroke-width="2.5" stroke-linejoin="round" points="' + src.points.map(xy).join(' ') + '"/>';
+    src.points.forEach(function (p, i) {
+      if (i === 0 || i === src.points.length - 1) return;
+      var a = P(p); s += '<circle cx="' + a[0].toFixed(1) + '" cy="' + a[1].toFixed(1) + '" r="3" fill="var(--sheet)" stroke="var(--ink)" stroke-width="1.5"/>';
+    });
+    [['psrOEI', false], ['psrAEO', true]].forEach(function (m) {
+      var x = r[m[0]]; if (x.beyond) return;
+      var a = P(x.pos), rad = x.seg.tc * Math.PI / 180, dx = Math.cos(rad) * 11, dy = Math.sin(rad) * 11;
+      s += '<line x1="' + (a[0] - dx).toFixed(1) + '" y1="' + (a[1] - dy).toFixed(1) + '" x2="' + (a[0] + dx).toFixed(1) + '" y2="' + (a[1] + dy).toFixed(1) + '" stroke="var(--blue)" stroke-width="4"' + (m[1] ? ' stroke-dasharray="3 2.5"' : '') + '/>';
+    });
+    [['petAEO', true], ['petOEI', false]].forEach(function (m) {
+      var a = P(r[m[0]].pos);
+      s += '<path d="M' + a[0].toFixed(1) + ' ' + (a[1] - 8).toFixed(1) + ' l8 8 -8 8 -8 -8Z" fill="' + (m[1] ? 'var(--sheet)' : 'var(--magenta)') + '" stroke="var(--magenta)" stroke-width="2"/>';
+    });
+    [[src.points[0], src.offset], [src.points[src.points.length - 1], src.offset + src.points.length - 1]].forEach(function (e) {
+      var a = P(e[0]);
+      s += '<circle cx="' + a[0].toFixed(1) + '" cy="' + a[1].toFixed(1) + '" r="6.5" fill="var(--ink)"/><circle cx="' + a[0].toFixed(1) + '" cy="' + a[1].toFixed(1) + '" r="2.5" fill="var(--sea)"/>';
+      var anchor = a[0] > W - 90 ? 'end' : (a[0] < 90 ? 'start' : 'middle');
+      var ty = a[1] < 30 ? a[1] + 24 : a[1] - 12;
+      s += '<text class="svg-l" text-anchor="' + anchor + '" x="' + a[0].toFixed(1) + '" y="' + ty.toFixed(1) + '" paint-order="stroke" stroke="var(--sea)" stroke-width="4">' + esc(ptShort(e[0], e[1])) + '</text>';
+    });
+    var p = last.p;
+    if (p.windSpd > 0) {
+      var cx = W - 40, cy = 40, wr = p.windDirT * Math.PI / 180;
+      var bx = cx + Math.sin(wr) * 20, by = cy - Math.cos(wr) * 20, ex = cx - Math.sin(wr) * 20, ey = cy + Math.cos(wr) * 20;
+      s += '<circle cx="' + cx + '" cy="' + cy + '" r="27" fill="var(--sheet)" fill-opacity=".85" stroke="var(--rule)"/>';
+      s += '<line x1="' + bx.toFixed(1) + '" y1="' + by.toFixed(1) + '" x2="' + ex.toFixed(1) + '" y2="' + ey.toFixed(1) + '" stroke="var(--ink)" stroke-width="2"/>';
+      var a1 = wr + Math.PI * 0.85, a2 = wr - Math.PI * 0.85;
+      s += '<path d="M' + ex.toFixed(1) + ' ' + ey.toFixed(1) + ' L' + (ex + Math.sin(a1) * 8).toFixed(1) + ' ' + (ey - Math.cos(a1) * 8).toFixed(1) + ' L' + (ex + Math.sin(a2) * 8).toFixed(1) + ' ' + (ey - Math.cos(a2) * 8).toFixed(1) + 'Z" fill="var(--ink)"/>';
+      s += '<text class="svg-t" text-anchor="middle" x="' + cx + '" y="' + (cy + 42) + '">' + deg(p.windDirT) + 'T/' + f0(p.windSpd) + 'kt</text>';
+    }
+    s += '</svg>';
+    return '<figure class="fig">' + s + '<figcaption><span><i style="background:var(--magenta);transform:rotate(45deg)"></i>' + esc(T('legPet')) + '</span><span><i style="background:var(--blue)"></i>' + esc(T('legPsr')) + '</span><span>' + esc(T('legRest')) + '</span></figcaption></figure>';
+  }
+
+  function gridLbl(v, pos, neg) { var a = Math.abs(v), d = Math.floor(a), m = Math.round((a - d) * 60); return (v >= 0 ? pos : neg) + d + '°' + (m ? m + '′' : ''); }
+
+  /* --- pasek odległości --- */
+  function stripFig(r, src, depShort, destShort) {
+    var W = 900, H = 150, x0 = 24, x1 = W - 24, y = 76;
+    function X(s) { return x0 + (x1 - x0) * (s / r.D); }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + esc(T('stripAria')) + '">';
+    s += '<line x1="' + x0 + '" x2="' + x1 + '" y1="' + y + '" y2="' + y + '" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>';
+    r.segs.forEach(function (g, i) { if (i === 0) return; var x = X(g.s0); s += '<line x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + (y - 6) + '" y2="' + (y + 6) + '" stroke="var(--ink-2)" stroke-width="1.5"/>'; });
+    s += '<circle cx="' + x0 + '" cy="' + y + '" r="6" fill="var(--ink)"/><circle cx="' + x1 + '" cy="' + y + '" r="6" fill="var(--ink)"/>';
+    s += '<text class="svg-l" x="' + x0 + '" y="' + (H - 8) + '">' + esc(depShort) + '</text><text class="svg-l" text-anchor="end" x="' + x1 + '" y="' + (H - 8) + '">' + esc(destShort) + '</text>';
+    s += '<text class="svg-t" text-anchor="end" x="' + x1 + '" y="' + (H - 26) + '">' + f1(r.D) + ' NM</text><text class="svg-t" x="' + x0 + '" y="' + (H - 26) + '">0</text>';
+    function mark(x, kind, filled, row, label) {
+      var xx = X(x.s), col = kind === 'pet' ? 'var(--magenta)' : 'var(--blue)';
+      var up = kind === 'pet', ly = up ? (y - 22 - row * 22) : (y + 26 + row * 18);
+      var anchor = xx > W - 90 ? 'end' : (xx < 90 ? 'start' : 'middle');
+      var o = '';
+      if (kind === 'pet') o += '<path d="M' + xx.toFixed(1) + ' ' + (y - 8) + ' l8 8 -8 8 -8 -8Z" fill="' + (filled ? col : 'var(--sheet)') + '" stroke="' + col + '" stroke-width="2"/>';
+      else o += '<line x1="' + xx.toFixed(1) + '" x2="' + xx.toFixed(1) + '" y1="' + (y - 11) + '" y2="' + (y + 11) + '" stroke="' + col + '" stroke-width="4"' + (filled ? '' : ' stroke-dasharray="3 2.5"') + '/>';
+      o += '<line x1="' + xx.toFixed(1) + '" x2="' + xx.toFixed(1) + '" y1="' + (up ? y - 9 : y + 12) + '" y2="' + (up ? ly + 4 : ly - 12) + '" stroke="' + col + '" stroke-width="1" stroke-opacity=".6"/>';
+      o += '<text class="svg-t" style="fill:' + col + ';font-weight:700" text-anchor="' + anchor + '" x="' + xx.toFixed(1) + '" y="' + ly + '">' + label + ' ' + f1(x.s) + '</text>';
+      return o;
+    }
+    s += mark(r.petAEO, 'pet', false, 1, 'PET2');
+    s += mark(r.petOEI, 'pet', true, 0, 'PET1');
+    if (!r.psrOEI.beyond) s += mark(r.psrOEI, 'psr', true, 0, 'PSR1');
+    if (!r.psrAEO.beyond) s += mark(r.psrAEO, 'psr', false, 1, 'PSR2');
+    if (r.psrOEI.beyond || r.psrAEO.beyond) s += '<text class="svg-t" text-anchor="end" x="' + x1 + '" y="' + (y + 30) + '" style="fill:var(--blue)">' + esc(T('psrBeyond')) + '</text>';
+    s += '</svg>';
+    return '<figure class="fig">' + s + '<figcaption><span>' + esc(T('stripCap')) + '</span></figcaption></figure>';
+  }
+
+  /* --- navlog --- */
+  function navlog(r, src, vc) {
+    var u = unit(), cum = 0, tcum = 0;
+    var marks = [['petOEI', 'PET1', 'pet', ''], ['petAEO', 'PET2', 'pet', ' sec'], ['psrOEI', 'PSR1', 'psr', ''], ['psrAEO', 'PSR2', 'psr', ' sec']];
+    var rows = r.segs.map(function (g, n) {
+      cum = g.s1; var t = g.dist / g.outAEO; tcum += t;
+      var v = vc.seg(g);
+      var to = src.points[g.i + 1];
+      var name = src.manual ? 'DEST' : ptShort(to, src.offset + g.i + 1);
+      var coord = src.manual ? '' : C.fmtCoord(to);
+      var mk = marks.map(function (m) { var x = r[m[0]]; if (x.beyond) return ''; return (x.seg === g) ? '<span class="mk ' + m[2] + m[3] + '">' + m[1] + '</span>' : ''; }).join('');
+      return '<tr><td class="l">' + (n + 1) + '</td><td class="l wp">' + esc(name) + mk + (coord && name.indexOf('WPT') === 0 ? '<small>' + coord + '</small>' : '') + '</td>' +
+        '<td>' + deg(g.tc) + '</td><td>' + vfmt(v) + '</td><td>' + deg(g.tc - v) + '</td><td>' + deg(g.thAEO - v) + '</td>' +
+        '<td>' + f1(g.dist) + '</td><td>' + f1(cum) + '</td>' +
+        '<td>' + f0(g.outAEO) + '</td><td>' + f0(g.homeAEO) + '</td><td>' + f0(g.outOEI) + '</td><td>' + f0(g.homeOEI) + '</td>' +
+        '<td>' + hm(t) + '</td><td>' + hm(tcum) + '</td><td>' + f0(num(state.fuel) - tcum * last.p.ffAEO) + '</td></tr>';
+    }).join('');
+    var th = T('th');
+    var varNote = vc.auto ? T('navVarAuto', model().name) : T('navVarManual', vfmt(vc.dep));
+    return '<div class="tablewrap"><table class="navlog"><caption>' + esc(T('navCap', u, varNote)) + '</caption><thead><tr>' +
+      th.map(function (x, i) { return '<th' + (i < 2 ? ' class="l"' : '') + '>' + esc(x) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + rows + '</tbody><tfoot><tr><td class="l" colspan="6">' + esc(T('total')) + '</td><td>' + f1(r.D) + '</td><td colspan="5"></td><td>' + hm(r.tripTimeAEO) + '</td><td></td><td>' + f0(r.fuelAtDest) + '</td></tr></tfoot></table></div>';
+  }
+
+  function renderHints(src, vc) {
+    var v = vc.dep, wd = num(state.windDir), txt = '';
+    if (isFinite(wd)) txt = state.windRef === 'M' ? T('windMtoT', deg(wd), deg(wd + v)) : T('windTtoM', deg(wd), deg(wd - v));
+    if (state.mode === 'manual') { var mc = num(state.mc); if (isFinite(mc)) txt += T('courseMtoT', deg(mc), deg(mc + v)); }
+    else {
+      txt += T('routeTrue');
+      if (vc.auto && src) {
+        var lo = 1e9, hi = -1e9;
+        src.points.forEach(function (p) { var x = vc.at(p); lo = Math.min(lo, x); hi = Math.max(hi, x); });
+        txt += T('varRange', vfmt(lo), vfmt(hi));
+      }
+    }
+    $('wind-hint').textContent = txt;
+    var ff = num(state.ffAEO), rs = num(state.reserve), fu = num(state.fuel), fh = '';
+    if (ff > 0 && rs >= 0) fh += T('reserveMin', Math.round(rs / ff * 60));
+    if (ff > 0 && fu > 0) fh += T('endurance', hm((fu - (rs || 0)) / ff));
+    $('fuel-hint').textContent = fh;
+    if (state.varMode === 'auto') renderVarControls();
+  }
+
+  /* ---------- tekst do schowka ---------- */
+  function summaryText() {
+    if (!last || !last.r.ok) return '';
+    var r = last.r, src = last.src, u = unit();
+    var dep = src.manual ? 'DEP' : ptShort(src.points[0], src.offset), dest = src.manual ? 'DEST' : ptShort(src.points[src.points.length - 1], src.offset + src.points.length - 1);
+    var L = [];
+    L.push(T('sumHead') + ' ' + dep + '→' + dest + '  ' + f1(r.D) + ' NM  W ' + deg(last.p.windDirT) + 'T/' + f0(last.p.windSpd) + 'kt  VAR ' + vfmt(last.vc.dep));
+    L.push('TAS ' + state.tasAEO + '/' + state.tasOEI + ' kt  FF ' + state.ffAEO + '/' + state.ffOEI + ' ' + u + '/h  FOB ' + state.fuel + ' ' + T('sumRes') + ' ' + state.reserve + ' ' + u);
+    function line(lbl, x, isPsr) {
+      if (isPsr && x.beyond) return lbl + ': ' + T('sumBeyond', f0(x.surplus) + ' ' + u);
+      var t = clock(x.tFromDep);
+      return lbl + ': ' + f1(x.s) + ' ' + T('nmFrom', dep) + ', ' + hm(x.tFromDep) + (t ? ' (' + t + ')' : '') + ', ' + T('sumFuel') + ' ' + f0(x.fuelRemain) + ' ' + u + (src.manual ? '' : ', ' + C.fmtCoord(x.pos)) + ' — ' + wptRef(x, src);
+    }
+    L.push(line(T('sumPet1'), r.petOEI));
+    L.push(line(T('sumPet2'), r.petAEO));
+    L.push(line(T('sumPsr1'), r.psrOEI, true));
+    L.push(line(T('sumPsr2'), r.psrAEO, true));
+    r.warnings.forEach(function (w) { L.push(T('warnUp') + ': ' + msg(w, 'w')); });
+    return L.join('\n');
+  }
+
+  function toast(m) {
+    var t = document.createElement('div'); t.className = 'toast'; t.textContent = m; document.body.appendChild(t);
+    setTimeout(function () { t.remove(); }, 2800);
+  }
+
+  /* ---------- import pliku: plan SkyDemon, model WMM (.COF) lub archiwum .zip z modelem ---------- */
+  function unzipCof(buf) {
+    var dv = new DataView(buf), u8 = new Uint8Array(buf), e = -1;
+    for (var i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+    if (e < 0) return Promise.reject(new Error('zip'));
+    var cnt = dv.getUint16(e + 10, true), off = dv.getUint32(e + 16, true), pick = null, td = new TextDecoder();
+    for (var k = 0; k < cnt; k++) {
+      if (dv.getUint32(off, true) !== 0x02014b50) break;
+      var method = dv.getUint16(off + 10, true), csize = dv.getUint32(off + 20, true), nlen = dv.getUint16(off + 28, true),
+        xlen = dv.getUint16(off + 30, true), clen = dv.getUint16(off + 32, true), loff = dv.getUint32(off + 42, true);
+      var name = td.decode(u8.subarray(off + 46, off + 46 + nlen));
+      if (/\.cof$/i.test(name) && !/__MACOSX/.test(name)) {
+        var score = /(^|\/)WMM\.COF$/i.test(name) ? 2 : (/HR/i.test(name) ? 0 : 1);
+        if (!pick || score > pick.score) pick = { method: method, csize: csize, loff: loff, score: score };
+      }
+      off += 46 + nlen + xlen + clen;
+    }
+    if (!pick) return Promise.reject(new Error('zip'));
+    var start = pick.loff + 30 + dv.getUint16(pick.loff + 26, true) + dv.getUint16(pick.loff + 28, true);
+    var data = u8.subarray(start, start + pick.csize);
+    if (pick.method === 0) return Promise.resolve(td.decode(data));
+    if (pick.method !== 8 || typeof DecompressionStream === 'undefined') return Promise.reject(new Error('zip'));
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  }
+
+  function loadModelText(text) {
+    var m = WMM.parseCOF(text);
+    var test = WMM.declination(m, 50, 20, m.epoch + 1);
+    if (!isFinite(test)) throw new Error('cof');
+    userModel = m; LS.set(K.wmm, m);
+    state.varMode = 'auto'; save();
+    renderInputs(); render();
+    toast(T('modelLoaded', m.name));
+  }
+
+  function handleText(text, fileName) {
+    var t = text.replace(/^﻿/, '').trim();
+    if (t.charAt(0) === '<') {
+      var id = addPlan(t, fileName || 'plan.flightplan');
+      state.planId = id; state.mode = 'route';
+      var p = curPlan(), prim = 0;
+      p.data.legs.forEach(function (l, i) { if (l.primary) prim = i; });
+      applyLeg(prim);
+      save(); renderInputs(); render();
+      toast(T('imported', p.data.legs.length, fileName || '—'));
+    } else loadModelText(t);
+  }
+
+  function errText(e) { var c = e && e.message; return (c && (DICT[lang]['e_' + c] || DICT.pl['e_' + c])) || c || ''; }
+
+  function importFile(file) {
+    if (!file) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var buf = rd.result, u8 = new Uint8Array(buf);
+      if (u8[0] === 0x50 && u8[1] === 0x4B) {
+        unzipCof(buf).then(loadModelText).catch(function (e) { toast(T('importFail', errText(e.message === 'cof' ? e : new Error('zip')))); });
+        return;
+      }
+      try { handleText(new TextDecoder('utf-8').decode(buf), file.name); }
+      catch (e) { toast(T('importFail', errText(e))); }
+    };
+    rd.onerror = function () { toast(T('readFail')); };
+    rd.readAsArrayBuffer(file);
+  }
+
+  /* ---------- zdarzenia ---------- */
+  document.addEventListener('input', function (e) {
+    var el = e.target, k = el.getAttribute && el.getAttribute('data-k');
+    if (!k || el.readOnly) return;
+    state[k] = el.value;
+    if (el.getAttribute('data-oei')) { state.oeiExample = false; $('oei-chip').hidden = true; $('perf').classList.remove('example'); $('perf-hint').textContent = ''; }
+    if (el.getAttribute('data-perf')) storePerf();
+    save(); render();
+  });
+  document.addEventListener('change', function (e) {
+    var id = e.target.id;
+    if (id === 'plan') { state.planId = e.target.value; applyLeg(0); save(); renderInputs(); render(); }
+    else if (id === 'from') { state.fromIdx = +e.target.value; if (state.fromIdx >= state.toIdx) state.toIdx = curLeg().points.length - 1; save(); renderInputs(); render(); }
+    else if (id === 'to') { state.toIdx = +e.target.value; if (state.fromIdx >= state.toIdx) state.fromIdx = 0; save(); renderInputs(); render(); }
+    else if (id === 'unit') { state.unit = e.target.value; save(); renderInputs(); render(); }
+    else if (id === 'file' || id === 'file-cof') { importFile(e.target.files && e.target.files[0]); e.target.value = ''; }
+  });
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('button');
+    if (!b || b.disabled) return;
+    if (b.hasAttribute('data-mode')) { state.mode = b.getAttribute('data-mode'); save(); renderInputs(); render(); }
+    else if (b.hasAttribute('data-ref')) { state.windRef = b.getAttribute('data-ref'); save(); renderInputs(); render(); }
+    else if (b.hasAttribute('data-hem')) { state.varHem = b.getAttribute('data-hem'); save(); renderInputs(); render(); }
+    else if (b.hasAttribute('data-vm')) {
+      var vm = b.getAttribute('data-vm');
+      if (vm === 'manual' && state.varMode === 'auto' && autoVarActive()) {
+        var src = currentPoints(), v = src ? varCtx(src.points).dep : NaN;
+        if (isFinite(v)) { state.varDeg = Math.abs(v).toFixed(1); state.varHem = v < 0 ? 'W' : 'E'; }
+      }
+      state.varMode = vm; save(); renderInputs(); render();
+    }
+    else if (b.hasAttribute('data-leg')) { applyLeg(+b.getAttribute('data-leg')); save(); renderInputs(); render(); }
+    else if (b.hasAttribute('data-name-save')) {
+      var k = b.getAttribute('data-name-save'), inp = document.querySelector('[data-name-key="' + k + '"]');
+      var nv = inp && inp.value.trim().toUpperCase().slice(0, 12);
+      if (nv) { names[k] = nv; LS.set(K.names, names); renderInputs(); render(); }
+    } else if (b.hasAttribute('data-name-clear')) { delete names[b.getAttribute('data-name-clear')]; LS.set(K.names, names); renderInputs(); render(); }
+    else if (b.id === 'delplan') {
+      if (b.getAttribute('data-armed') !== '1') { b.setAttribute('data-armed', '1'); b.textContent = T('delConfirm'); setTimeout(function () { b.removeAttribute('data-armed'); b.textContent = T('del'); }, 3000); return; }
+      plans = plans.filter(function (p) { return p.id !== state.planId; }); savePlans();
+      state.planId = plans.length ? plans[0].id : null; if (plans.length) applyLeg(0);
+      b.removeAttribute('data-armed'); b.textContent = T('del');
+      save(); renderInputs(); render();
+    } else if (b.id === 'copy') {
+      var txt = summaryText(); if (!txt) { toast(T('noResults')); return; }
+      var fallback = function () { var ta = $('clip'); ta.value = txt; ta.select(); try { document.execCommand('copy'); toast(T('copied')); } catch (er) { toast(T('copyManual')); } };
+      try { navigator.clipboard.writeText(txt).then(function () { toast(T('copied')); }, fallback); } catch (er) { fallback(); }
+    } else if (b.id === 'theme') {
+      var order = ['auto', 'light', 'dark'], cur = LS.get(K.theme, 'auto');
+      LS.set(K.theme, order[(order.indexOf(cur) + 1) % 3]); applyTheme();
+    } else if (b.id === 'lang') {
+      lang = lang === 'pl' ? 'en' : 'pl'; LS.set(K.lang, lang);
+      applyStatic(); renderInputs(); render();
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.hasAttribute && e.target.hasAttribute('data-name-key')) {
+      var btn = document.querySelector('[data-name-save="' + e.target.getAttribute('data-name-key') + '"]'); if (btn) btn.click();
+    }
+  });
+
+  var dragDepth = 0;
+  window.addEventListener('dragenter', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { dragDepth++; $('drop').hidden = false; } });
+  window.addEventListener('dragleave', function () { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('drop').hidden = true; });
+  window.addEventListener('dragover', function (e) { e.preventDefault(); });
+  window.addEventListener('drop', function (e) { e.preventDefault(); dragDepth = 0; $('drop').hidden = true; if (e.dataTransfer && e.dataTransfer.files[0]) importFile(e.dataTransfer.files[0]); });
+
+  /* ---------- motyw i offline (tylko PWA) ---------- */
+  function applyTheme() {
+    if (!IS_PWA) return;
+    var t = LS.get(K.theme, 'auto');
+    if (t === 'auto') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+    $('theme').textContent = T({ auto: 'themeAuto', light: 'themeLight', dark: 'themeDark' }[t]);
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', getComputedStyle(document.body).backgroundColor);
+  }
+  if (IS_PWA) {
+    $('theme').hidden = false;
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').then(function () { return navigator.serviceWorker.ready; }).then(function () { $('offline').hidden = false; }).catch(function () { /* brak SW */ });
+    }
+  }
+
+  /* ---------- start ---------- */
+  applyStatic();
+  if (state.mode === 'route' && !curPlan()) state.mode = plans.length ? 'route' : 'manual';
+  if (curPlan() && state.toIdx < 0) applyLeg(state.legIdx || 0);
+  renderInputs();
+  render();
+  window.__petpsr = { unzipCof: unzipCof };
+})();
+</script>
+
+</body>
+</html>

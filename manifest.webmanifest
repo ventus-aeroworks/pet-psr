@@ -1,0 +1,30 @@
+{
+  "name": "PET/PSR Navlog",
+  "short_name": "PET/PSR",
+  "description": "Point of Equal Time i Point of Safe Return z planów SkyDemon — działa offline. Autor: Hubert Pofelski.",
+  "lang": "pl",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#EEF1EC",
+  "theme_color": "#142036",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
